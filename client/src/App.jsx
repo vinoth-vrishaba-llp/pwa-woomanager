@@ -9,16 +9,21 @@ import OrderDetails from './components/OrderDetails';
 import ProductsList from './components/ProductsList';
 import Analytics from './components/Analytics';
 import SettingsView from './components/SettingsView';
+import CustomersList from './components/CustomersList';
+import CustomerDetails from './components/CustomerDetails';
 
-import { fetchOrders, fetchProducts } from './services/api';
+// use env if you want, fallback to localhost:5000
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
 
 const App = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [userConfig, setUserConfig] = useState(null);
-  const [data, setData] = useState({ orders: [], products: [] });
+  const [data, setData] = useState({ orders: [], products: [], customers: [] });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [selectedOrder, setSelectedOrder] = useState(null);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
 
   useEffect(() => {
     const savedConfig = localStorage.getItem('woo_manager_config');
@@ -33,15 +38,24 @@ const App = () => {
   };
 
   const handleDemo = () => {
-    const demoConfig = { useMock: true, url: 'https://demo.store', key: 'demo', secret: 'demo', useProxy: false };
+    const demoConfig = {
+      useMock: true,
+      url: 'https://demo.store',
+      key: 'demo',
+      secret: 'demo',
+      useProxy: false,
+    };
     setUserConfig(demoConfig);
     localStorage.setItem('woo_manager_config', JSON.stringify(demoConfig));
   };
 
   const handleLogout = () => {
     setUserConfig(null);
-    setData({ orders: [], products: [] });
+    setData({ orders: [], products: [], customers: [] });
     setError(null);
+    setSelectedOrder(null);
+    setSelectedCustomer(null);
+    setActiveTab('dashboard');
     localStorage.removeItem('woo_manager_config');
   };
 
@@ -51,26 +65,39 @@ const App = () => {
     setError(null);
 
     try {
-      const [orders, products] = await Promise.all([
-        fetchOrders(userConfig),
-        fetchProducts(userConfig),
+      const body = JSON.stringify({ config: userConfig });
+      const headers = { 'Content-Type': 'application/json' };
+
+      const [ordersRes, productsRes, customersRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/orders`, { method: 'POST', headers, body }),
+        fetch(`${API_BASE_URL}/api/products`, { method: 'POST', headers, body }),
+        fetch(`${API_BASE_URL}/api/customers`, { method: 'POST', headers, body }),
       ]);
 
-      setData({ orders, products });
+      if (!ordersRes.ok) throw new Error('Failed to fetch orders');
+      if (!productsRes.ok) throw new Error('Failed to fetch products');
+      if (!customersRes.ok) throw new Error('Failed to fetch customers');
 
-      // cache to localStorage for offline (basic)
-      localStorage.setItem('woo_manager_cache', JSON.stringify({ orders, products }));
+      const [ordersJson, productsJson, customersJson] = await Promise.all([
+        ordersRes.json(),
+        productsRes.json(),
+        customersRes.json(),
+      ]);
+
+      setData({
+        orders: ordersJson.orders || [],
+        products: productsJson.products || [],
+        customers: customersJson.customers || [],
+      });
     } catch (err) {
-      console.error(err);
-      let msg = err.message || 'Failed to connect.';
-      setError(msg);
-
-      // offline fallback: try cached data
-      const cached = localStorage.getItem('woo_manager_cache');
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        setData(parsed);
+      let msg = 'Failed to connect.';
+      if (err.message.includes('Failed to fetch') || err.message.includes('CORS')) {
+        msg =
+          "Connection blocked by browser security (CORS). Please enable 'Use CORS Proxy' in the login screen.";
+      } else {
+        msg = err.message;
       }
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -85,6 +112,11 @@ const App = () => {
   const handleSelectOrder = (order) => {
     setSelectedOrder(order);
     setActiveTab('order-details');
+  };
+
+  const handleSelectCustomer = (customer) => {
+    setSelectedCustomer(customer);
+    setActiveTab('customer-details');
   };
 
   if (!userConfig) {
@@ -104,6 +136,7 @@ const App = () => {
             config={userConfig}
           />
         );
+
       case 'orders':
         return (
           <OrdersList
@@ -115,6 +148,7 @@ const App = () => {
             onSelectOrder={handleSelectOrder}
           />
         );
+
       case 'products':
         return (
           <ProductsList
@@ -125,31 +159,70 @@ const App = () => {
             onLogout={handleLogout}
           />
         );
+
+      case 'customers':
+        return (
+          <CustomersList
+            customers={data.customers}
+            loading={loading}
+            error={error}
+            onRefresh={fetchAllData}
+            onLogout={handleLogout}
+            onSelectCustomer={handleSelectCustomer}
+          />
+        );
+
       case 'analytics':
         return <Analytics />;
+
       case 'settings':
         return <SettingsView config={userConfig} onLogout={handleLogout} />;
+
       case 'order-details':
-        return <OrderDetails order={selectedOrder} onBack={() => setActiveTab('orders')} />;
+        return (
+          <OrderDetails
+            order={selectedOrder}
+            onBack={() => setActiveTab('orders')}
+          />
+        );
+
+      case 'customer-details':
+        return (
+          <CustomerDetails
+            customer={selectedCustomer}
+            onBack={() => setActiveTab('customers')}
+          />
+        );
+
       default:
-        return null;
+        return (
+          <Dashboard
+            navigate={setActiveTab}
+            data={data}
+            loading={loading}
+            error={error}
+            onRefresh={fetchAllData}
+            config={userConfig}
+          />
+        );
     }
   };
 
   return (
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto relative shadow-2xl overflow-hidden">
       <div className="h-1 bg-purple-800 w-full"></div>
-      <main className="h-full min-h-screen bg-gray-50">
-        {renderContent()}
-      </main>
+      <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
-      {activeTab !== 'order-details' && (
+      {/* Hide nav on full-screen detail views */}
+      {activeTab !== 'order-details' && activeTab !== 'customer-details' && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
           <div className="flex justify-around items-center px-2 py-3">
             <button
               onClick={() => setActiveTab('dashboard')}
               className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === 'dashboard' ? 'text-purple-600' : 'text-gray-400 hover:text-gray-600'
+                activeTab === 'dashboard'
+                  ? 'text-purple-600'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
               <Home size={24} strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} />
@@ -164,14 +237,21 @@ const App = () => {
                   : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              <ShoppingBag size={24} strokeWidth={activeTab === 'orders' ? 2.5 : 2} />
+              <ShoppingBag
+                size={24}
+                strokeWidth={
+                  activeTab === 'orders' || activeTab === 'order-details' ? 2.5 : 2
+                }
+              />
               <span className="text-[10px] mt-1 font-medium">Orders</span>
             </button>
 
             <button
               onClick={() => setActiveTab('products')}
               className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === 'products' ? 'text-purple-600' : 'text-gray-400 hover:text-gray-600'
+                activeTab === 'products'
+                  ? 'text-purple-600'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
               <Package size={24} strokeWidth={activeTab === 'products' ? 2.5 : 2} />
@@ -181,20 +261,30 @@ const App = () => {
             <button
               onClick={() => setActiveTab('analytics')}
               className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === 'analytics' ? 'text-purple-600' : 'text-gray-400 hover:text-gray-600'
+                activeTab === 'analytics'
+                  ? 'text-purple-600'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              <BarChart2 size={24} strokeWidth={activeTab === 'analytics' ? 2.5 : 2} />
+              <BarChart2
+                size={24}
+                strokeWidth={activeTab === 'analytics' ? 2.5 : 2}
+              />
               <span className="text-[10px] mt-1 font-medium">Stats</span>
             </button>
 
             <button
               onClick={() => setActiveTab('settings')}
               className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === 'settings' ? 'text-purple-600' : 'text-gray-400 hover:text-gray-600'
+                activeTab === 'settings'
+                  ? 'text-purple-600'
+                  : 'text-gray-400 hover:text-gray-600'
               }`}
             >
-              <Settings size={24} strokeWidth={activeTab === 'settings' ? 2.5 : 2} />
+              <Settings
+                size={24}
+                strokeWidth={activeTab === 'settings' ? 2.5 : 2}
+              />
               <span className="text-[10px] mt-1 font-medium">Store</span>
             </button>
           </div>

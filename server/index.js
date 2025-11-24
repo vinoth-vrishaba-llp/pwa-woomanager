@@ -55,6 +55,85 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
+app.get('/api/categories', async (req, res) => {
+  try {
+    const { config } = req.query;
+    const parsedConfig = JSON.parse(config);
+
+    const categories = await WooService.getProductCategories(parsedConfig);
+
+    res.json({ categories });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get customers (enriched with total_spent + orders_count)
+app.post('/api/customers', async (req, res) => {
+  try {
+    const { config } = req.body;
+    if (!config) return res.status(400).json({ error: 'Missing config' });
+
+    // Fetch both in parallel
+    const [customersBase, orders] = await Promise.all([
+      WooService.getCustomers(config, config.useMock),
+      WooService.getOrders(config, config.useMock),
+    ]);
+
+    // 1) Build stats map from orders
+    const statsByKey = new Map();
+
+    orders.forEach((o) => {
+      // Prefer customer_id if > 0, otherwise use billing_email (guest)
+      let key = null;
+
+      if (o.customer_id && o.customer_id !== 0) {
+        key = `id:${o.customer_id}`;
+      } else if (o.billing_email) {
+        key = `email:${o.billing_email.toLowerCase()}`;
+      }
+
+      if (!key) return;
+
+      const existing = statsByKey.get(key) || {
+        total_spent: 0,
+        orders_count: 0,
+      };
+
+      existing.total_spent += Number(o.total) || 0;
+      existing.orders_count += 1;
+
+      statsByKey.set(key, existing);
+    });
+
+    // 2) Enrich customers with stats
+    const customers = customersBase.map((c) => {
+      // Try by id first, then email
+      let stats = null;
+
+      if (c.id) {
+        stats = statsByKey.get(`id:${c.id}`) || null;
+      }
+
+      if (!stats && c.email) {
+        stats = statsByKey.get(`email:${c.email.toLowerCase()}`) || null;
+      }
+
+      return {
+        ...c,
+        total_spent: stats ? stats.total_spent : 0,
+        orders_count: stats ? stats.orders_count : 0,
+      };
+    });
+
+    res.json({ customers });
+  } catch (err) {
+    console.error('Customers API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

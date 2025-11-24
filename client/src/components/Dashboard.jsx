@@ -1,4 +1,4 @@
-import React from 'react';
+import React from "react";
 import {
   Package,
   ShoppingBag,
@@ -8,10 +8,10 @@ import {
   ArrowUpRight,
   Plus,
   Users,
-} from 'lucide-react';
-import StatusBadge from './ui/StatusBadge';
-import LoadingState from './ui/LoadingState';
-import ErrorState from './ui/ErrorState';
+} from "lucide-react";
+import StatusBadge from "./ui/StatusBadge";
+import LoadingState from "./ui/LoadingState";
+import ErrorState from "./ui/ErrorState";
 
 const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
   if (loading) return <LoadingState />;
@@ -29,7 +29,7 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
           <div>
             <h1 className="text-2xl font-bold">Dashboard</h1>
             <p className="text-purple-200 text-xs truncate max-w-[200px]">
-              {config.useMock ? 'Demo Store' : config.url}
+              {config.useMock ? "Demo Store" : config.url}
             </p>
           </div>
           <div className="flex gap-2">
@@ -50,7 +50,9 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
             <div className="flex items-center gap-2 text-purple-200 mb-1 text-xs uppercase font-bold tracking-wider">
               <IndianRupee size={14} /> Sales
             </div>
-            <div className="text-2xl font-bold text-white">₹{totalSales.toFixed(2)}</div>
+            <div className="text-2xl font-bold text-white">
+              ₹{totalSales.toFixed(2)}
+            </div>
             <div className="text-xs text-green-300 flex items-center mt-1">
               <ArrowUpRight size={12} className="mr-1" /> +12.5%
             </div>
@@ -59,7 +61,9 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
             <div className="flex items-center gap-2 text-purple-200 mb-1 text-xs uppercase font-bold tracking-wider">
               <Package size={14} /> Orders
             </div>
-            <div className="text-2xl font-bold text-white">{data.orders?.length || 0}</div>
+            <div className="text-2xl font-bold text-white">
+              {data.orders?.length || 0}
+            </div>
             <div className="text-xs text-green-300 flex items-center mt-1">
               <ArrowUpRight size={12} className="mr-1" /> +4 pending
             </div>
@@ -73,24 +77,31 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
         </h3>
         <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
           <button
-            onClick={() => navigate('products')}
+            onClick={() => navigate("products")}
             className="flex flex-col items-center min-w-[80px] gap-2 group"
           >
             <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
               <Plus size={24} />
             </div>
-            <span className="text-xs font-medium text-gray-600">Add Product</span>
+            <span className="text-xs font-medium text-gray-600">
+              Add Product
+            </span>
           </button>
           <button
-            onClick={() => navigate('orders')}
+            onClick={() => navigate("orders")}
             className="flex flex-col items-center min-w-[80px] gap-2 group"
           >
             <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
               <ShoppingBag size={24} />
             </div>
-            <span className="text-xs font-medium text-gray-600">View Orders</span>
+            <span className="text-xs font-medium text-gray-600">
+              View Orders
+            </span>
           </button>
-          <button className="flex flex-col items-center min-w-[80px] gap-2 group">
+          <button
+            onClick={() => navigate("customers")}
+            className="flex flex-col items-center min-w-[80px] gap-2 group"
+          >
             <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
               <Users size={24} />
             </div>
@@ -105,7 +116,7 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
             Recent Orders
           </h3>
           <button
-            onClick={() => navigate('orders')}
+            onClick={() => navigate("orders")}
             className="text-purple-600 text-sm font-medium"
           >
             View All
@@ -113,7 +124,9 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
         </div>
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           {recentOrders.length === 0 ? (
-            <div className="p-4 text-center text-gray-500 text-sm">No orders found.</div>
+            <div className="p-4 text-center text-gray-500 text-sm">
+              No orders found.
+            </div>
           ) : (
             recentOrders.map((order) => (
               <div
@@ -134,7 +147,9 @@ const Dashboard = ({ navigate, data, loading, error, onRefresh, config }) => {
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="font-bold text-gray-800">₹{order.total.toFixed(2)}</div>
+                  <div className="font-bold text-gray-800">
+                    ₹{order.total.toFixed(2)}
+                  </div>
                   <StatusBadge status={order.status} />
                 </div>
               </div>

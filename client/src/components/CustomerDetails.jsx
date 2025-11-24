@@ -1,0 +1,163 @@
+// client/src/components/CustomerDetails.jsx
+import React from 'react';
+import {
+  ArrowLeft,
+  Mail,
+  Phone,
+  MapPin,
+  ShoppingBag,
+  IndianRupee,
+} from 'lucide-react';
+
+const CustomerDetails = ({ customer, onBack }) => {
+  if (!customer) return null;
+
+  const billing = customer.billing || {};
+  const shipping = customer.shipping || {};
+
+  const formattedDate =
+    customer.date_created &&
+    new Date(customer.date_created).toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+
+  return (
+    <div className="pb-24 pt-0 px-0 animate-fade-in min-h-screen bg-gray-50 z-20 absolute inset-0">
+      {/* Header */}
+      <div className="bg-white sticky top-0 z-10 border-b border-gray-200 px-4 py-4 flex items-center gap-3 shadow-sm">
+        <button onClick={onBack} className="p-2 hover:bg-gray-100 rounded-full transition">
+          <ArrowLeft size={22} className="text-gray-600" />
+        </button>
+        <div className="flex-1 flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center overflow-hidden">
+            {customer.avatar_url ? (
+              <img
+                src={customer.avatar_url}
+                alt={customer.name}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <span className="text-gray-600 text-xs font-bold">
+                {customer.name?.charAt(0) || 'C'}
+              </span>
+            )}
+          </div>
+          <div>
+            <h1 className="text-base font-bold text-gray-800">{customer.name}</h1>
+            <p className="text-xs text-gray-500">
+              {customer.email || 'No email'} {customer.phone && `• ${customer.phone}`}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="p-4 space-y-4">
+        {/* Summary Card */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
+          <div>
+            <div className="text-xs text-gray-500 flex items-center gap-1">
+              <ShoppingBag size={14} />
+              Orders
+            </div>
+            <div className="text-xl font-bold text-gray-800">
+              {customer.orders_count || 0}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-xs text-gray-500 flex items-center gap-1 justify-end">
+              <IndianRupee size={14} />
+              Total Spent
+            </div>
+            <div className="text-xl font-bold text-purple-700">
+              ₹{(customer.total_spent || 0).toFixed(2)}
+            </div>
+          </div>
+        </div>
+
+        {/* Meta (joined date) */}
+        {formattedDate && (
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <div className="text-xs text-gray-500 mb-1">Customer since</div>
+            <div className="text-sm font-semibold text-gray-800">{formattedDate}</div>
+          </div>
+        )}
+
+        {/* Contact actions */}
+        {(customer.email || customer.phone) && (
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex gap-3">
+            {customer.phone && (
+              <a
+                href={`tel:${customer.phone}`}
+                className="flex-1 flex items-center justify-center gap-2 text-xs font-medium text-gray-700 border border-gray-200 rounded-lg py-2 hover:bg-gray-50"
+              >
+                <Phone size={14} />
+                Call
+              </a>
+            )}
+            {customer.email && (
+              <a
+                href={`mailto:${customer.email}`}
+                className="flex-1 flex items-center justify-center gap-2 text-xs font-medium text-gray-700 border border-gray-200 rounded-lg py-2 hover:bg-gray-50"
+              >
+                <Mail size={14} />
+                Email
+              </a>
+            )}
+          </div>
+        )}
+
+        {/* Billing Address */}
+        {billing && (billing.address_1 || billing.city || billing.state) && (
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="font-bold text-sm text-gray-800 mb-2 border-b border-gray-100 pb-1">
+              Billing Address
+            </h3>
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center flex-shrink-0">
+                <MapPin size={14} />
+              </div>
+              <div className="text-sm text-gray-600 space-y-0.5">
+                {billing.address_1 && <p>{billing.address_1}</p>}
+                {(billing.city || billing.state || billing.postcode) && (
+                  <p>
+                    {billing.city}, {billing.state} {billing.postcode}
+                  </p>
+                )}
+                {billing.country && <p>{billing.country}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Shipping Address */}
+        {shipping && (shipping.address_1 || shipping.city || shipping.state) && (
+          <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
+            <h3 className="font-bold text-sm text-gray-800 mb-2 border-b border-gray-100 pb-1">
+              Shipping Address
+            </h3>
+            <div className="flex gap-3">
+              <div className="w-7 h-7 rounded-full bg-green-50 text-green-600 flex items-center justify-center flex-shrink-0">
+                <MapPin size={14} />
+              </div>
+              <div className="text-sm text-gray-600 space-y-0.5">
+                {shipping.address_1 && <p>{shipping.address_1}</p>}
+                {(shipping.city || shipping.state || shipping.postcode) && (
+                  <p>
+                    {shipping.city}, {shipping.state} {shipping.postcode}
+                  </p>
+                )}
+                {shipping.country && <p>{shipping.country}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default CustomerDetails;
