@@ -133,6 +133,48 @@ app.post('/api/customers', async (req, res) => {
   }
 });
 
+// Sales report (default: last 7 days)
+app.post('/api/reports/sales', async (req, res) => {
+  try {
+    const { config, date_min, date_max } = req.body;
+    if (!config) return res.status(400).json({ error: 'Missing config' });
+
+    let startDate = date_min;
+    let endDate = date_max;
+
+    // Default: last 30 days
+if (!startDate || !endDate) {
+  const now = new Date();
+  const end = new Date(now);
+  end.setUTCHours(23, 59, 59, 999);
+
+  const start = new Date(now);
+  start.setDate(start.getDate() - 29); // 30 days including today
+  start.setUTCHours(0, 0, 0, 0);
+
+  const fmt = (d) => d.toISOString().slice(0, 10);
+
+  startDate = fmt(start);
+  endDate = fmt(end);
+}
+
+
+    const report = await WooService.getSalesReport(config, {
+      date_min: startDate,
+      date_max: endDate,
+    });
+
+    res.json({
+      report,
+      date_min: startDate,
+      date_max: endDate,
+    });
+  } catch (err) {
+    console.error('Sales report API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
