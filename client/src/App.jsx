@@ -288,8 +288,7 @@ const App = () => {
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
       {activeTab !== "order-details" &&
-        activeTab !== "customer-details" &&
-        activeTab !== "notifications" && (
+        activeTab !== "customer-details" &&(
           <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
             <div className="flex justify-around items-center px-2 py-3">
               <button

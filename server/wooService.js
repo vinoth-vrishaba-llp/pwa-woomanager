@@ -82,6 +82,8 @@ getOrders: async (config, useMock) => {
       shipping: order.shipping,
       payment_method: order.payment_method_title,
       currency_symbol: order.currency_symbol,
+      shipping_total: parseFloat(order.shipping_total || '0') || 0,
+  discount_total: parseFloat(order.discount_total || '0') || 0,
     }));
   } catch (err) {
     console.error('Fetch Orders Error:', err);
