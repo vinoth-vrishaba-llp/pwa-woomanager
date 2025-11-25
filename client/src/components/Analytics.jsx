@@ -1,93 +1,153 @@
 // client/src/components/Analytics.jsx
 import React, { useState, useMemo } from 'react';
-import { RefreshCw, BarChart2, ChevronDown } from 'lucide-react';
+import { RefreshCw, BarChart2 } from 'lucide-react';
 import LoadingState from './ui/LoadingState';
 import ErrorState from './ui/ErrorState';
 
-const Analytics = ({ data, salesReport, loading, error, onRefresh }) => {
+const API_BASE_URL = 'http://localhost:5000'; // same as in App.jsx
+
+const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => {
+  // which metric is highlighted
   const [activeMetric, setActiveMetric] = useState('total_sales'); // 'total_sales' | 'total_orders' | 'avg_order'
-  const [isRangeOpen, setIsRangeOpen] = useState(false);
+
+  // range control
+  const [rangeType, setRangeType] = useState('30d'); // '7d' | '30d' | '90d' | 'custom'
   const [rangeLabel, setRangeLabel] = useState('Last 30 days');
 
-  if (loading) return <LoadingState />;
-  if (error) return <ErrorState message={error} onRetry={onRefresh} />;
+  // for custom dates
+  const [customStart, setCustomStart] = useState('');
+  const [customEnd, setCustomEnd] = useState('');
+
+  // local report state (start with report from App, then override per range)
+  const [report, setReport] = useState(salesReport || null);
+  const [localLoading, setLocalLoading] = useState(false);
+  const [localError, setLocalError] = useState(null);
+
+  const isLoading = loading || localLoading;
+  const mergedError = localError || error;
 
   const orders = Array.isArray(data.orders) ? data.orders : [];
-  const report = salesReport || null;
 
-  // ---- Base totals from report or orders (full period) ----
+  // ---------- helpers ----------
+
+  const fmtDate = (d) => d.toISOString().slice(0, 10); // YYYY-MM-DD
+
+  const fetchRangeReport = async (dateMin, dateMax) => {
+    if (!config) return;
+
+    setLocalLoading(true);
+    setLocalError(null);
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/reports/sales`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          config,
+          date_min: dateMin,
+          date_max: dateMax,
+        }),
+      });
+
+      if (!res.ok) throw new Error('Failed to fetch sales report');
+      const json = await res.json(); // { report, date_min, date_max }
+      setReport(json.report || null);
+    } catch (e) {
+      setLocalError(e.message || 'Failed to load analytics');
+    } finally {
+      setLocalLoading(false);
+    }
+  };
+
+  const handlePresetRange = async (type) => {
+    setRangeType(type);
+    let label = 'Last 30 days';
+    let days = 30;
+    if (type === '7d') {
+      label = 'Last 7 days';
+      days = 7;
+    } else if (type === '90d') {
+      label = 'Last 90 days';
+      days = 90;
+    }
+    setRangeLabel(label);
+
+    // compute date_min/date_max relative to today
+    const now = new Date();
+    const end = new Date(now);
+    end.setUTCHours(23, 59, 59, 999);
+
+    const start = new Date(now);
+    start.setDate(start.getDate() - (days - 1));
+    start.setUTCHours(0, 0, 0, 0);
+
+    await fetchRangeReport(fmtDate(start), fmtDate(end));
+  };
+
+  const handleApplyCustom = async () => {
+    if (!customStart || !customEnd) return;
+    setRangeType('custom');
+    setRangeLabel('Custom range');
+    await fetchRangeReport(customStart, customEnd);
+  };
+
+  // ---------- base totals (current report) ----------
+
   const baseTotalSales = report
     ? Number(report.total_sales || 0)
     : orders.reduce((acc, o) => acc + (Number(o.total) || 0), 0);
 
   const baseTotalOrders = report ? Number(report.total_orders || 0) : orders.length;
-
   const baseNetSales = report ? Number(report.net_sales || 0) : baseTotalSales;
-
   const baseAvgOrder =
     baseTotalOrders > 0 ? baseTotalSales / baseTotalOrders : 0;
 
-  // ---- Build daily series (report.totals OR orders grouped by day) ----
+  // ---------- build dailySeries from report.totals or fallback to orders ----------
+
   const dailySeries = useMemo(() => {
-    // 1) collect all days into a map
-    const map = new Map(); // dateStr -> { sales, orders }
+    const series = [];
 
-    const addToMap = (dateStr, salesDelta, ordersDelta) => {
-      if (!dateStr) return;
-      const key = dateStr;
-      const prev = map.get(key) || { sales: 0, orders: 0 };
-      prev.sales += salesDelta;
-      prev.orders += ordersDelta;
-      map.set(key, prev);
-    };
-
-    // Prefer server report if it has totals
     if (report && report.totals && Object.keys(report.totals).length > 0) {
+      // Woo report already in requested range
       Object.entries(report.totals).forEach(([dateStr, row]) => {
-        addToMap(
-          dateStr,
-          Number(row.sales || 0),
-          Number(row.orders || 0)
-        );
+        series.push({
+          date: dateStr,
+          sales: Number(row.sales || 0),
+          orders: Number(row.orders || 0),
+        });
       });
     } else {
-      // Fallback: derive from orders
+      // Fallback: group orders by date (still limited by whatever range backend used for report)
+      const map = new Map(); // dateStr -> { sales, orders }
+
       orders.forEach((o) => {
         if (!o.date) return;
         const d = new Date(o.date);
         if (Number.isNaN(d.getTime())) return;
-        const dateStr = d.toISOString().slice(0, 10); // YYYY-MM-DD
-        addToMap(dateStr, Number(o.total) || 0, 1);
+        const dateStr = d.toISOString().slice(0, 10);
+
+        const prev = map.get(dateStr) || { sales: 0, orders: 0 };
+        prev.sales += Number(o.total) || 0;
+        prev.orders += 1;
+        map.set(dateStr, prev);
+      });
+
+      map.forEach((row, dateStr) => {
+        series.push({
+          date: dateStr,
+          sales: row.sales,
+          orders: row.orders,
+        });
       });
     }
 
-    const allEntries = Array.from(map.entries());
-    if (!allEntries.length) return [];
+    if (!series.length) return [];
 
-    // 2) sort ascending by date
-    allEntries.sort((a, b) => new Date(a[0]) - new Date(b[0]));
+    series.sort((a, b) => new Date(a.date) - new Date(b.date));
+    return series;
+  }, [report, orders]);
 
-    // 3) apply range filter (Last 7/30/90 days)
-    const match = rangeLabel.match(/\d+/);
-    const windowDays = match ? Number(match[0]) : 30;
-
-    const lastDate = new Date(allEntries[allEntries.length - 1][0]);
-    const cutoff = new Date(lastDate);
-    cutoff.setDate(lastDate.getDate() - (windowDays - 1));
-
-    return allEntries
-      .filter(([dateStr]) => {
-        const d = new Date(dateStr);
-        return d >= cutoff && d <= lastDate;
-      })
-      .map(([dateStr, row]) => ({
-        date: dateStr,
-        sales: row.sales,
-        orders: row.orders,
-      }));
-  }, [report, orders, rangeLabel]);
-
-  // ---- Totals in CURRENT range (this is what should change on range change) ----
+  // totals from current series (for consistency)
   const rangeTotals = useMemo(() => {
     if (!dailySeries.length) {
       return {
@@ -105,21 +165,26 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh }) => {
   const displaySales = rangeTotals.sales;
   const displayOrders = rangeTotals.orders;
   const displayAvgOrder = rangeTotals.avgOrder;
-  const displayNetSales = displaySales; // for now, same as sales in range
+  const displayNetSales = displaySales;
 
-  // ---- Choose which metric to visualize for value + chart ----
-  const { chartValues, maxValue } = useMemo(() => {
-    if (!dailySeries.length) return { chartValues: [], maxValue: 0 };
+  // chart values - FIXED: Calculate maxValue correctly
+  const { maxValue } = useMemo(() => {
+    if (!dailySeries.length) return { maxValue: 0 };
 
     let values;
     if (activeMetric === 'total_orders') {
       values = dailySeries.map((d) => d.orders);
+    } else if (activeMetric === 'avg_order') {
+      values = dailySeries.map((d) => {
+        const count = dailySeries.reduce((acc, day) => acc + day.orders, 0);
+        const totalSales = dailySeries.reduce((acc, day) => acc + day.sales, 0);
+        return count > 0 ? totalSales / count : 0;
+      });
     } else {
       values = dailySeries.map((d) => d.sales);
     }
-
     const max = Math.max(...values, 0);
-    return { chartValues: values, maxValue: max };
+    return { maxValue: max };
   }, [dailySeries, activeMetric]);
 
   const startLabel =
@@ -127,7 +192,7 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh }) => {
   const endLabel =
     dailySeries.length > 0 ? dailySeries[dailySeries.length - 1].date : '–';
 
-  // ---- Main metric number & title ----
+  // main metric
   let metricValue = displaySales;
   let metricTitle = 'Sales in selected period';
   if (activeMetric === 'total_orders') {
@@ -143,21 +208,11 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh }) => {
       ? metricValue.toFixed(0)
       : `₹${metricValue.toFixed(2)}`;
 
-  // Fake growth + fallback progress
   const growthPercent = 0.0;
-  const progressPercent =
-    maxValue > 0 && chartValues.length > 0
-      ? Math.min(
-          100,
-          (chartValues.reduce((a, v) => a + v, 0) /
-            (maxValue * chartValues.length)) * 100
-        )
-      : 30;
 
-  const handleSelectRange = (label) => {
-    setRangeLabel(label);
-    setIsRangeOpen(false);
-  };
+  // Only show full loading on initial load, not on filter changes
+  if (loading && !report) return <LoadingState />;
+  if (mergedError && !report) return <ErrorState message={mergedError} onRetry={onRefresh} />;
 
   return (
     <div className="pb-24 pt-16 px-4 animate-fade-in">
@@ -167,176 +222,247 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh }) => {
         <button
           onClick={onRefresh}
           className="p-2 bg-gray-100 rounded-full active:scale-95 transition"
+          disabled={localLoading}
         >
-          <RefreshCw size={20} className="text-gray-600" />
+          <RefreshCw size={20} className={`text-gray-600 ${localLoading ? 'animate-spin' : ''}`} />
         </button>
       </div>
 
-      <div className="mt-2">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 mt-4">
-          {/* Top row */}
-          <div className="flex justify-between items-start pb-4 mb-4 border-b border-gray-100">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full bg-purple-100 border border-purple-200 flex items-center justify-center">
-                <BarChart2 className="text-purple-700" size={26} />
+      {/* Range filter chips + custom dates (TOP) */}
+      <div className="mt-4 mb-3">
+        <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+          <button
+            type="button"
+            onClick={() => handlePresetRange('7d')}
+            disabled={localLoading}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition ${
+              rangeType === '7d'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            Last 7 days
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePresetRange('30d')}
+            disabled={localLoading}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition ${
+              rangeType === '30d'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            Last 30 days
+          </button>
+          <button
+            type="button"
+            onClick={() => handlePresetRange('90d')}
+            disabled={localLoading}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition ${
+              rangeType === '90d'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            Last 90 days
+          </button>
+          <button
+            type="button"
+            onClick={() => setRangeType('custom')}
+            disabled={localLoading}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border whitespace-nowrap transition ${
+              rangeType === 'custom'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+          >
+            Custom
+          </button>
+        </div>
+
+        {rangeType === 'custom' && (
+          <div className="mt-3 bg-white rounded-xl border border-gray-200 p-3 flex flex-col gap-2 text-[11px]">
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <div className="text-gray-500 mb-1">From</div>
+                <input
+                  type="date"
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  value={customStart}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  disabled={localLoading}
+                />
               </div>
-              <div>
-                <div className="text-2xl font-semibold text-gray-900">
-                  {formattedMetricValue}
-                </div>
-                <p className="text-xs text-gray-500 mt-0.5">{metricTitle}</p>
+              <div className="flex-1">
+                <div className="text-gray-500 mb-1">To</div>
+                <input
+                  type="date"
+                  className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  value={customEnd}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  disabled={localLoading}
+                />
               </div>
             </div>
-            <span className="inline-flex items-center bg-green-50 border border-green-200 text-green-700 text-[11px] font-medium px-2 py-0.5 rounded-full">
-              ↑ {growthPercent.toFixed(1)}%
-            </span>
-          </div>
-
-          {/* Net sales vs orders */}
-          <div className="flex justify-between text-sm mb-4">
-            <div>
-              <span className="text-gray-500 mr-1">Net sales:</span>
-              <span className="font-semibold text-gray-900">
-                ₹{displayNetSales.toFixed(2)}
-              </span>
-            </div>
-            <div>
-              <span className="text-gray-500 mr-1">Orders:</span>
-              <span className="font-semibold text-gray-900">
-                {displayOrders}
-              </span>
-            </div>
-          </div>
-
-          {/* Metric filter chips */}
-          <div className="flex gap-2 mb-4">
-            <button
-              onClick={() => setActiveMetric('total_sales')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-                activeMetric === 'total_sales'
-                  ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                  : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              Total Sales
-            </button>
-            <button
-              onClick={() => setActiveMetric('total_orders')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-                activeMetric === 'total_orders'
-                  ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                  : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              Total Orders
-            </button>
-            <button
-              onClick={() => setActiveMetric('avg_order')}
-              className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
-                activeMetric === 'avg_order'
-                  ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                  : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
-              }`}
-            >
-              Avg. Order Value
-            </button>
-          </div>
-
-          {/* Chart / fallback */}
-          <div className="mt-1">
-            {dailySeries.length === 0 ? (
-              <div className="mb-3">
-                <div className="w-full h-3 rounded-full bg-gray-100 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-gradient-to-r from-purple-500 via-fuchsia-500 to-pink-500 transition-all duration-500"
-                    style={{ width: `${progressPercent}%` }}
-                  />
-                </div>
-                <p className="text-[11px] text-gray-400 mt-1">
-                  No per-day breakdown available. Showing overall period progress.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div className="h-24 flex items-end gap-[3px] overflow-hidden">
-                  {dailySeries.map((day, idx) => {
-                    const value =
-                      activeMetric === 'total_orders' ? day.orders : day.sales;
-                    const pct =
-                      maxValue > 0 ? (value / maxValue) * 100 : 0;
-                    const height = Math.max(pct, 8); // minimum height
-
-                    return (
-                      <div
-                        key={day.date || idx}
-                        className="flex-1 flex flex-col items-center group"
-                      >
-                        <div
-                          className="w-full rounded-full bg-purple-200 group-hover:bg-purple-500 transition-all duration-200 relative"
-                          style={{ height: `${height}%` }}
-                        >
-                          <div className="absolute -top-6 left-1/2 -translate-x-1/2 text-[10px] px-1.5 py-0.5 rounded bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                            {activeMetric === 'total_orders'
-                              ? `${day.orders} orders`
-                              : `₹${day.sales.toFixed(0)}`}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="flex justify-between text-[10px] text-gray-400 mt-2">
-                  <span>{startLabel}</span>
-                  <span>{endLabel}</span>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Footer: range dropdown + link */}
-          <div className="relative flex justify-between items-center border-t border-gray-100 mt-4 pt-3">
-            <div className="relative">
+            <div className="flex justify-end">
               <button
                 type="button"
-                onClick={() => setIsRangeOpen((v) => !v)}
-                className="inline-flex items-center text-xs font-medium text-gray-700 hover:text-gray-900"
+                onClick={handleApplyCustom}
+                disabled={!customStart || !customEnd || localLoading}
+                className="px-3 py-1.5 rounded-full text-xs font-medium bg-purple-600 text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {rangeLabel}
-                <ChevronDown size={14} className="ml-1" />
+                {localLoading ? 'Loading...' : 'Apply'}
               </button>
-
-              {isRangeOpen && (
-                <div className="absolute mt-2 w-36 bg-white border border-gray-200 rounded-lg shadow-lg text-xs z-20">
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => handleSelectRange('Last 7 days')}
-                  >
-                    Last 7 days
-                  </button>
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => handleSelectRange('Last 30 days')}
-                  >
-                    Last 30 days
-                  </button>
-                  <button
-                    className="w-full text-left px-3 py-2 hover:bg-gray-50"
-                    onClick={() => handleSelectRange('Last 90 days')}
-                  >
-                    Last 90 days
-                  </button>
-                </div>
-              )}
             </div>
-
-            <button
-              type="button"
-              className="inline-flex items-center text-xs font-medium text-purple-600 hover:text-purple-700"
-            >
-              Sales Report
-              <span className="ml-1 text-sm">→</span>
-            </button>
           </div>
+        )}
+      </div>
+
+      {/* Main analytics card */}
+      <div className={`bg-white rounded-2xl shadow-sm border border-gray-100 p-5 transition-opacity ${localLoading ? 'opacity-60' : 'opacity-100'}`}>
+        {/* Top row */}
+        <div className="flex justify-between items-start pb-4 mb-4 border-b border-gray-100">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-purple-100 border border-purple-200 flex items-center justify-center">
+              <BarChart2 className="text-purple-700" size={26} />
+            </div>
+            <div>
+              <div className="text-2xl font-semibold text-gray-900">
+                {formattedMetricValue}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">{metricTitle}</p>
+              <p className="text-[10px] text-gray-400 mt-0.5">
+                {rangeLabel}
+              </p>
+            </div>
+          </div>
+          <span className="inline-flex items-center bg-green-50 border border-green-200 text-green-700 text-[11px] font-medium px-2 py-0.5 rounded-full">
+            ↑ {growthPercent.toFixed(1)}%
+          </span>
+        </div>
+
+        {/* Net sales vs orders */}
+        <div className="flex justify-between text-sm mb-4">
+          <div>
+            <span className="text-gray-500 mr-1">Net sales:</span>
+            <span className="font-semibold text-gray-900">
+              ₹{displayNetSales.toFixed(2)}
+            </span>
+          </div>
+          <div>
+            <span className="text-gray-500 mr-1">Orders:</span>
+            <span className="font-semibold text-gray-900">
+              {displayOrders}
+            </span>
+          </div>
+        </div>
+
+        {/* Metric filter chips */}
+        <div className="flex gap-2 mb-6">
+          <button
+            onClick={() => setActiveMetric('total_sales')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+              activeMetric === 'total_sales'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            Total Sales
+          </button>
+          <button
+            onClick={() => setActiveMetric('total_orders')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+              activeMetric === 'total_orders'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            Total Orders
+          </button>
+          <button
+            onClick={() => setActiveMetric('avg_order')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium border transition ${
+              activeMetric === 'avg_order'
+                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
+                : 'bg-gray-50 text-gray-700 border-gray-200 hover:bg-gray-100'
+            }`}
+          >
+            Avg. Order Value
+          </button>
+        </div>
+
+        {/* Chart */}
+        <div className="mt-1">
+          {dailySeries.length === 0 ? (
+            <div className="mb-3">
+              <div className="w-full h-3 rounded-full bg-gray-100 overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-purple-500 via-fuchsia-500 to-pink-500 w-1/3" />
+              </div>
+              <p className="text-[11px] text-gray-400 mt-1">
+                No per-day breakdown available for this range.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="h-48 flex items-end gap-1 overflow-x-auto no-scrollbar pb-2">
+                {dailySeries.map((day, idx) => {
+                  let value;
+                  
+                  if (activeMetric === 'total_orders') {
+                    value = day.orders;
+                  } else if (activeMetric === 'avg_order') {
+                    const totalOrders = dailySeries.reduce((acc, d) => acc + d.orders, 0);
+                    const totalSales = dailySeries.reduce((acc, d) => acc + d.sales, 0);
+                    value = totalOrders > 0 ? totalSales / totalOrders : 0;
+                  } else {
+                    value = day.sales;
+                  }
+                  
+                  const pct = maxValue > 0 ? (value / maxValue) * 100 : 0;
+                  const height = Math.max(pct, 5); // minimum 5% height
+
+                  return (
+                    <div
+                      key={day.date || idx}
+                      className="flex-1 flex flex-col items-center justify-end group min-w-[24px]"
+                    >
+                      <div
+                        className="w-full rounded-t-lg bg-gradient-to-t from-purple-500 to-purple-400 group-hover:from-purple-600 group-hover:to-purple-500 transition-all duration-200 relative"
+                        style={{ height: `${height}%` }}
+                      >
+                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-[11px] px-2 py-1 rounded bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 font-medium">
+                          {activeMetric === 'total_orders'
+                            ? `${day.orders} orders`
+                            : activeMetric === 'avg_order'
+                            ? `₹${value.toFixed(0)}`
+                            : `₹${day.sales.toFixed(0)}`}
+                        </div>
+                      </div>
+                      <div className="text-[9px] text-gray-400 mt-1 text-center">
+                        {day.date.slice(5)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex justify-between text-[10px] text-gray-400 mt-4 px-1">
+                <span>{startLabel}</span>
+                <span>{endLabel}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Footer link */}
+        <div className="flex justify-end items-center border-t border-gray-100 mt-6 pt-3">
+          <button
+            type="button"
+            className="inline-flex items-center text-xs font-medium text-purple-600 hover:text-purple-700"
+          >
+            Sales Report
+            <span className="ml-1 text-sm">→</span>
+          </button>
         </div>
       </div>
     </div>

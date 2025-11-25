@@ -227,14 +227,15 @@ const App = () => {
             onLogout={handleLogout}
           />
         );
-      case 'analytics':
+     case 'analytics':
   return (
     <Analytics
       data={data}
-      salesReport={salesReport}   // ✅ use the separate state
+      salesReport={salesReport}   // initial 30-day report from App
       loading={loading}
       error={error}
       onRefresh={fetchAllData}
+      config={userConfig}         // 👈 pass config so Analytics can hit /api/reports/sales
     />
   );
       case "settings":
