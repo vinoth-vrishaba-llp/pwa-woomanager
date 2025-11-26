@@ -12,12 +12,17 @@ import SettingsView from "./components/SettingsView";
 import CustomersList from "./components/CustomersList";
 import CustomerDetails from "./components/CustomerDetails";
 import Notifications from "./components/Notifications";
+import SsoComplete from "./components/SsoComplete";
 
-const API_BASE_URL = "http://localhost:5000"; // backend
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const App = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [userConfig, setUserConfig] = useState(null);
+
+  // unified session:
+  // { type:'sso', store_id, store_url, app_user_id }
+  // or { type:'manual', config: { url, key, secret, useProxy, useMock } }
+  const [session, setSession] = useState(null);
 
   const [data, setData] = useState({
     orders: [],
@@ -25,24 +30,50 @@ const App = () => {
     customers: [],
   });
 
-  const [salesReport, setSalesReport] = useState(null); // ⬅ used by Dashboard
+  const [salesReport, setSalesReport] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [selectedCustomer, setSelectedCustomer] = useState(null);
 
-  // -------- Load config from localStorage --------
+  // ---- route: /sso-complete handled separately ----
+  const path = window.location.pathname;
+  if (path.startsWith("/sso-complete")) {
+    return <SsoComplete />;
+  }
+
+  // -------- Load session from localStorage --------
   useEffect(() => {
-    const savedConfig = localStorage.getItem("woo_manager_config");
-    if (savedConfig) {
-      setUserConfig(JSON.parse(savedConfig));
+    const ssoRaw = localStorage.getItem("woo_manager_store");
+    if (ssoRaw) {
+      try {
+        const parsed = JSON.parse(ssoRaw);
+        if (parsed && parsed.store_id && parsed.store_url) {
+          setSession({ type: "sso", ...parsed });
+          return;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // fallback: legacy manual config
+    const legacyConfigRaw = localStorage.getItem("woo_manager_config");
+    if (legacyConfigRaw) {
+      try {
+        const cfg = JSON.parse(legacyConfigRaw);
+        setSession({ type: "manual", config: cfg });
+      } catch {
+        // ignore
+      }
     }
   }, []);
 
-  // -------- Auth / config handlers --------
+  // -------- Auth / session handlers --------
   const handleLogin = (config) => {
-    setUserConfig(config);
+    // manual mode (NOT recommended for production, but kept for now)
+    setSession({ type: "manual", config });
     localStorage.setItem("woo_manager_config", JSON.stringify(config));
   };
 
@@ -54,81 +85,59 @@ const App = () => {
       secret: "demo",
       useProxy: false,
     };
-    setUserConfig(demoConfig);
+    setSession({ type: "manual", config: demoConfig });
     localStorage.setItem("woo_manager_config", JSON.stringify(demoConfig));
   };
 
   const handleLogout = () => {
-    setUserConfig(null);
+    setSession(null);
     setData({ orders: [], products: [], customers: [] });
     setSalesReport(null);
     setError(null);
     setActiveTab("dashboard");
     setSelectedOrder(null);
     setSelectedCustomer(null);
+    localStorage.removeItem("woo_manager_store");
     localStorage.removeItem("woo_manager_config");
   };
 
-  // -------- Fetch everything (orders, products, customers, report) --------
+  // -------- Fetch everything via /api/bootstrap --------
   const fetchAllData = useCallback(async () => {
-    if (!userConfig) return;
+    if (!session) return;
 
     setLoading(true);
     setError(null);
 
     try {
-      const body = JSON.stringify({ config: userConfig });
-      const headers = { "Content-Type": "application/json" };
+      let bodyObj;
+      if (session.type === "sso") {
+        bodyObj = { store_id: session.store_id };
+      } else if (session.type === "manual") {
+        bodyObj = { config: session.config };
+      } else {
+        throw new Error("Invalid session type");
+      }
 
-      const [ordersRes, productsRes, customersRes, salesRes] =
-        await Promise.all([
-          fetch(`${API_BASE_URL}/api/orders`, {
-            method: "POST",
-            headers,
-            body,
-          }),
-          fetch(`${API_BASE_URL}/api/products`, {
-            method: "POST",
-            headers,
-            body,
-          }),
-          fetch(`${API_BASE_URL}/api/customers`, {
-            method: "POST",
-            headers,
-            body,
-          }),
-          fetch(`${API_BASE_URL}/api/reports/sales`, {
-            method: "POST",
-            headers,
-            body,
-          }),
-        ]);
-
-      if (!ordersRes.ok) throw new Error("Failed to fetch orders");
-      if (!productsRes.ok) throw new Error("Failed to fetch products");
-      if (!customersRes.ok) throw new Error("Failed to fetch customers");
-      if (!salesRes.ok) throw new Error("Failed to fetch sales report");
-
-      const [ordersJson, productsJson, customersJson, salesJson] =
-        await Promise.all([
-          ordersRes.json(),
-          productsRes.json(),
-          customersRes.json(),
-          salesRes.json(),
-        ]);
-      console.log("Sales JSON from backend:", salesJson);
-
-      setData({
-        orders: ordersJson.orders || [],
-        products: productsJson.products || [],
-        customers: customersJson.customers || [],
+      const res = await fetch(`${API_BASE_URL}/api/bootstrap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(bodyObj),
       });
 
-      // backend: res.json({ report, date_min, date_max })
-      setSalesReport(salesJson.report || null);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || "Failed to fetch bootstrap data");
+      }
 
-      // Debug if needed
-      // console.log('Sales JSON from backend:', salesJson);
+      const json = await res.json();
+      console.log("Bootstrap JSON from backend:", json);
+
+      setData({
+        orders: json.orders || [],
+        products: json.products || [],
+        customers: json.customers || [],
+      });
+      setSalesReport(json.report || null);
     } catch (err) {
       let msg = "Failed to connect.";
       if (
@@ -144,13 +153,13 @@ const App = () => {
     } finally {
       setLoading(false);
     }
-  }, [userConfig]);
+  }, [session]);
 
   useEffect(() => {
-    if (userConfig) {
+    if (session) {
       fetchAllData();
     }
-  }, [userConfig, fetchAllData]);
+  }, [session, fetchAllData]);
 
   // -------- Selection handlers --------
   const handleSelectOrder = (order) => {
@@ -170,7 +179,7 @@ const App = () => {
 
     const now = new Date();
     const start = new Date(now);
-    start.setDate(start.getDate() - 1); // last 24 hours
+    start.setDate(start.getDate() - 1);
 
     return safeOrders
       .filter((o) => {
@@ -185,9 +194,14 @@ const App = () => {
   const notificationsCount = derivedNotifications.length;
 
   // -------- If not logged in, show login --------
-  if (!userConfig) {
+  if (!session) {
     return <LoginView onLogin={handleLogin} onDemo={handleDemo} />;
   }
+
+  const storeUrl =
+    session.type === "sso"
+      ? session.store_url
+      : session.config?.url || "Store";
 
   // -------- Screen switch --------
   const renderContent = () => {
@@ -200,7 +214,7 @@ const App = () => {
             loading={loading}
             error={error}
             onRefresh={fetchAllData}
-            config={userConfig}
+            config={{ url: storeUrl, useMock: session.type === "manual" && session.config.useMock }}
             salesReport={salesReport}
             notificationsCount={notificationsCount}
             onSelectOrder={handleSelectOrder}
@@ -227,18 +241,19 @@ const App = () => {
             onLogout={handleLogout}
           />
         );
-      case 'analytics':
-  return (
-    <Analytics
-      data={data}
-      salesReport={salesReport}   // ✅ use the separate state
-      loading={loading}
-      error={error}
-      onRefresh={fetchAllData}
-    />
-  );
+      case "analytics":
+        return (
+          <Analytics
+            data={data}
+            salesReport={salesReport}
+            loading={loading}
+            error={error}
+            onRefresh={fetchAllData}
+            // You no longer need full config here, but pass storeId if you later want server-side filtering
+          />
+        );
       case "settings":
-        return <SettingsView config={userConfig} onLogout={handleLogout} />;
+        return <SettingsView config={{ url: storeUrl }} onLogout={handleLogout} />;
       case "customers":
         return (
           <CustomersList
@@ -287,8 +302,7 @@ const App = () => {
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
       {activeTab !== "order-details" &&
-        activeTab !== "customer-details" &&
-        activeTab !== "notifications" && (
+        activeTab !== "customer-details" && (
           <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
             <div className="flex justify-around items-center px-2 py-3">
               <button

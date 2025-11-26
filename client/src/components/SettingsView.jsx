@@ -54,12 +54,6 @@ const SettingsView = ({ config, onLogout }) => (
       </button>
       <button className="w-full bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center text-gray-700 hover:bg-gray-50 transition">
         <div className="flex items-center gap-3">
-          <Truck size={20} className="text-gray-400" /> Shipping Methods
-        </div>
-        <ChevronRight size={16} className="text-gray-400" />
-      </button>
-      <button className="w-full bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center text-gray-700 hover:bg-gray-50 transition">
-        <div className="flex items-center gap-3">
           <IndianRupee size={20} className="text-gray-400" /> Payments
         </div>
         <ChevronRight size={16} className="text-gray-400" />
