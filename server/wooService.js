@@ -219,6 +219,32 @@ getOrders: async (config, useMock) => {
       totals: raw.totals || {},
     };
   },
+
+   // ------------------ CREATE WEBHOOK ------------------
+  createWebhook: async (config, { name, topic, delivery_url }) => {
+    const baseUrl = WooService.cleanUrl(config.url);
+    const finalUrl = WooService.buildUrl(baseUrl, 'webhooks', config);
+
+    const body = {
+      name,
+      topic,         // e.g. "order.created"
+      delivery_url,  // your backend webhook receiver
+      status: 'active',
+    };
+
+    const response = await fetch(finalUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Create webhook error ${response.status}: ${text}`);
+    }
+
+    return response.json(); // full webhook object with id, status, etc.
+  },
 };
 
 module.exports = WooService;

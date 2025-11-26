@@ -4,7 +4,7 @@ import { RefreshCw, BarChart2 } from 'lucide-react';
 import LoadingState from './ui/LoadingState';
 import ErrorState from './ui/ErrorState';
 
-const API_BASE_URL = 'http://localhost:5000'; // same as in App.jsx
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
 
 const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => {
   // which metric is highlighted
@@ -39,7 +39,7 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
     setLocalError(null);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/reports/sales`, {
+      const res = await fetch(`${API_BASE}/api/reports/sales`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -167,7 +167,7 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
   const displayAvgOrder = rangeTotals.avgOrder;
   const displayNetSales = displaySales;
 
-  // chart values - FIXED: Calculate maxValue correctly
+  // chart values - Calculate maxValue correctly per metric
   const { maxValue } = useMemo(() => {
     if (!dailySeries.length) return { maxValue: 0 };
 
@@ -175,11 +175,8 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
     if (activeMetric === 'total_orders') {
       values = dailySeries.map((d) => d.orders);
     } else if (activeMetric === 'avg_order') {
-      values = dailySeries.map((d) => {
-        const count = dailySeries.reduce((acc, day) => acc + day.orders, 0);
-        const totalSales = dailySeries.reduce((acc, day) => acc + day.sales, 0);
-        return count > 0 ? totalSales / count : 0;
-      });
+      // Calculate per-day average order values
+      values = dailySeries.map((d) => d.orders > 0 ? d.sales / d.orders : 0);
     } else {
       values = dailySeries.map((d) => d.sales);
     }
@@ -208,7 +205,48 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
       ? metricValue.toFixed(0)
       : `₹${metricValue.toFixed(2)}`;
 
-  const growthPercent = 0.0;
+  // Calculate growth percentage by comparing with previous period
+  const growthPercent = useMemo(() => {
+    // Use dailySeries instead of report.totals for more reliable data
+    if (!dailySeries || dailySeries.length < 2) {
+      return 0.0;
+    }
+
+    // Split data into two halves
+    const midPoint = Math.floor(dailySeries.length / 2);
+    const firstHalf = dailySeries.slice(0, midPoint);
+    const secondHalf = dailySeries.slice(midPoint);
+
+    let firstHalfTotal = 0;
+    let secondHalfTotal = 0;
+
+    if (activeMetric === 'total_orders') {
+      firstHalfTotal = firstHalf.reduce((sum, day) => sum + (day.orders || 0), 0);
+      secondHalfTotal = secondHalf.reduce((sum, day) => sum + (day.orders || 0), 0);
+    } else if (activeMetric === 'avg_order') {
+      const firstHalfSales = firstHalf.reduce((sum, day) => sum + (day.sales || 0), 0);
+      const firstHalfOrders = firstHalf.reduce((sum, day) => sum + (day.orders || 0), 0);
+      firstHalfTotal = firstHalfOrders > 0 ? firstHalfSales / firstHalfOrders : 0;
+
+      const secondHalfSales = secondHalf.reduce((sum, day) => sum + (day.sales || 0), 0);
+      const secondHalfOrders = secondHalf.reduce((sum, day) => sum + (day.orders || 0), 0);
+      secondHalfTotal = secondHalfOrders > 0 ? secondHalfSales / secondHalfOrders : 0;
+    } else {
+      // total_sales
+      firstHalfTotal = firstHalf.reduce((sum, day) => sum + (day.sales || 0), 0);
+      secondHalfTotal = secondHalf.reduce((sum, day) => sum + (day.sales || 0), 0);
+    }
+
+    // Handle edge cases
+    if (firstHalfTotal === 0 && secondHalfTotal === 0) return 0;
+    if (firstHalfTotal === 0) return 100;
+    if (!isFinite(firstHalfTotal) || !isFinite(secondHalfTotal)) return 0;
+    
+    const growth = ((secondHalfTotal - firstHalfTotal) / firstHalfTotal) * 100;
+    
+    // Return 0 if growth is NaN or not finite
+    return isFinite(growth) ? growth : 0;
+  }, [dailySeries, activeMetric]);
 
   // Only show full loading on initial load, not on filter changes
   if (loading && !report) return <LoadingState />;
@@ -337,8 +375,12 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
               </p>
             </div>
           </div>
-          <span className="inline-flex items-center bg-green-50 border border-green-200 text-green-700 text-[11px] font-medium px-2 py-0.5 rounded-full">
-            ↑ {growthPercent.toFixed(1)}%
+          <span className={`inline-flex items-center ${
+            growthPercent >= 0 
+              ? 'bg-green-50 border-green-200 text-green-700' 
+              : 'bg-red-50 border-red-200 text-red-700'
+          } border text-[11px] font-medium px-2 py-0.5 rounded-full`}>
+            {growthPercent >= 0 ? '↑' : '↓'} {Math.abs(growthPercent).toFixed(1)}%
           </span>
         </div>
 
@@ -405,46 +447,70 @@ const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => 
             </div>
           ) : (
             <>
-              <div className="h-48 flex items-end gap-1 overflow-x-auto no-scrollbar pb-2">
-                {dailySeries.map((day, idx) => {
-                  let value;
-                  
-                  if (activeMetric === 'total_orders') {
-                    value = day.orders;
-                  } else if (activeMetric === 'avg_order') {
-                    const totalOrders = dailySeries.reduce((acc, d) => acc + d.orders, 0);
-                    const totalSales = dailySeries.reduce((acc, d) => acc + d.sales, 0);
-                    value = totalOrders > 0 ? totalSales / totalOrders : 0;
-                  } else {
-                    value = day.sales;
-                  }
-                  
-                  const pct = maxValue > 0 ? (value / maxValue) * 100 : 0;
-                  const height = Math.max(pct, 5); // minimum 5% height
+              <div className="relative bg-gray-50 rounded-lg p-3 pt-12 overflow-hidden">
+                <div className="h-40 flex items-end gap-0.5 overflow-x-auto no-scrollbar">
+                  {dailySeries.map((day, idx) => {
+                    let value;
+                    
+                    if (activeMetric === 'total_orders') {
+                      value = day.orders;
+                    } else if (activeMetric === 'avg_order') {
+                      // Calculate average order value for THIS specific day
+                      value = day.orders > 0 ? day.sales / day.orders : 0;
+                    } else {
+                      value = day.sales;
+                    }
+                    
+                    // Use pixel-based minimum height to ensure bars are always visible
+                    const minHeightPx = value > 0 ? 12 : 4; // 12px for data, 4px for zero
+                    const calculatedHeightPx = maxValue > 0 ? (value / maxValue) * 152 : 0; // 152px = 160px container - 8px padding
+                    const heightPx = Math.max(calculatedHeightPx, minHeightPx);
 
-                  return (
-                    <div
-                      key={day.date || idx}
-                      className="flex-1 flex flex-col items-center justify-end group min-w-[24px]"
-                    >
+                    return (
                       <div
-                        className="w-full rounded-t-lg bg-gradient-to-t from-purple-500 to-purple-400 group-hover:from-purple-600 group-hover:to-purple-500 transition-all duration-200 relative"
-                        style={{ height: `${height}%` }}
+                        key={day.date || idx}
+                        className="flex-1 flex flex-col items-center justify-end group min-w-[18px] relative"
                       >
-                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 text-[11px] px-2 py-1 rounded bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-20 font-medium">
-                          {activeMetric === 'total_orders'
-                            ? `${day.orders} orders`
-                            : activeMetric === 'avg_order'
-                            ? `₹${value.toFixed(0)}`
-                            : `₹${day.sales.toFixed(0)}`}
+                        {/* Tooltip - appears on the right side to always be visible */}
+                        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-2 text-[10px] px-2 py-1.5 rounded-md bg-gray-900 text-white opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap z-30 font-medium shadow-lg">
+                          <div className="text-left">
+                            <div className="font-semibold">
+                              {activeMetric === 'total_orders'
+                                ? `${day.orders} orders`
+                                : activeMetric === 'avg_order'
+                                ? `₹${value.toFixed(2)}`
+                                : `₹${day.sales.toFixed(2)}`}
+                            </div>
+                            <div className="text-[9px] text-gray-300">{day.date}</div>
+                          </div>
+                          {/* Arrow pointing left */}
+                          <div className="absolute right-full top-1/2 -translate-y-1/2 border-4 border-transparent border-r-gray-900"></div>
+                        </div>
+                        
+                        {/* Bar */}
+                        <div
+                          className="w-full rounded-t-md transition-all duration-200 relative cursor-pointer"
+                          style={{ 
+                            height: `${heightPx}px`,
+                            maxHeight: '152px',
+                            background: activeMetric === 'total_orders' 
+                              ? 'linear-gradient(to top, #10b981, #34d399)' // green for orders
+                              : activeMetric === 'avg_order'
+                              ? 'linear-gradient(to top, #f59e0b, #fbbf24)' // orange for avg
+                              : 'linear-gradient(to top, #a855f7, #c084fc)', // purple for sales
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+                            minHeight: `${minHeightPx}px`
+                          }}
+                        ></div>
+                        
+                        {/* Date label */}
+                        <div className="text-[8px] text-gray-400 mt-1.5 text-center">
+                          {day.date.slice(5)}
                         </div>
                       </div>
-                      <div className="text-[9px] text-gray-400 mt-1 text-center">
-                        {day.date.slice(5)}
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </div>
               <div className="flex justify-between text-[10px] text-gray-400 mt-4 px-1">
                 <span>{startLabel}</span>
