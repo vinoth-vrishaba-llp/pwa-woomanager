@@ -4,7 +4,7 @@ import { RefreshCw, BarChart2 } from 'lucide-react';
 import LoadingState from './ui/LoadingState';
 import ErrorState from './ui/ErrorState';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000';
+const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
 const Analytics = ({ data, salesReport, loading, error, onRefresh, config }) => {
   // which metric is highlighted

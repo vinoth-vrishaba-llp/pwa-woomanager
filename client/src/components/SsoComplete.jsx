@@ -2,7 +2,7 @@
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, ExternalLink, Loader2 } from 'lucide-react';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 const SsoComplete = () => {
   const [success, setSuccess] = useState(null);
