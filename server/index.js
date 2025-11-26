@@ -11,9 +11,27 @@ const PORT = process.env.PORT || 5000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const API_BASE_URL = process.env.API_BASE_URL || `http://localhost:${PORT}`;
 const WOO_APP_NAME = process.env.WOO_APP_NAME || 'WooManager';
+const allowedOrigins = [
+  'http://localhost:5173',
+  process.env.FRONTEND_ORIGIN,       // Render Frontend
+];
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({
+  origin: function (origin, callback) {
+    // allow mobile apps / postman with no origin
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      console.warn('Blocked CORS origin:', origin);
+      return callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true,
+}));
+app.use(express.json({ limit: "2mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 // ------------------ SIMPLE CACHE (per store + resource) ------------------
 const cache = {
