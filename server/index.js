@@ -11,9 +11,15 @@ const PORT = process.env.PORT || 5000;
 const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const API_BASE_URL = process.env.API_BASE_URL || `http://localhost:${PORT}`;
 const WOO_APP_NAME = process.env.WOO_APP_NAME || 'WooManager';
+
+
+// 🔹 Razorpay keys from env
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+
 const allowedOrigins = [
   'http://localhost:5173',
-  process.env.FRONTEND_ORIGIN,       // Render Frontend
+  process.env.FRONTEND_ORIGIN,       
 ];
 
 app.use(cors({
@@ -240,31 +246,61 @@ app.post('/api/bootstrap', async (req, res) => {
     const cachedCustomers = getCached('customers', key, 2 * 60 * 60 * 1000);
     const cachedReport = getCached('report', key, 5 * 60 * 1000);
 
-    const [orders, products, customers, report] = await Promise.all([
+    // ---- default last 30 days (same logic as /api/reports/sales) ----
+    let startDate;
+    let endDate;
+    {
+      const now = new Date();
+      const end = new Date(now);
+      end.setUTCHours(23, 59, 59, 999);
+
+      const start = new Date(now);
+      start.setDate(start.getDate() - 29); // 30 days including today
+      start.setUTCHours(0, 0, 0, 0);
+
+      const fmt = (d) => d.toISOString().slice(0, 10);
+      startDate = fmt(start);
+      endDate = fmt(end);
+    }
+
+    const [orders, products, report] = await Promise.all([
       cachedOrders || WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
       cachedProducts || WooService.getProducts(resolvedConfig, resolvedConfig.useMock),
-      (async () => {
-        if (cachedCustomers) return cachedCustomers;
-        const baseCustomers = await WooService.getCustomers(
-          resolvedConfig,
-          resolvedConfig.useMock
-        );
-        return baseCustomers;
-      })(),
-      cachedReport || WooService.getSalesReport(resolvedConfig, {}),
+      cachedReport ||
+        WooService.getSalesReport(resolvedConfig, {
+          date_min: startDate,
+          date_max: endDate,
+        }),
     ]);
+
+    let customers = cachedCustomers;
+    if (!customers) {
+      const baseCustomers = await WooService.getCustomers(
+        resolvedConfig,
+        resolvedConfig.useMock
+      );
+      customers = enrichCustomersWithOrders(baseCustomers, orders);
+      setCached('customers', key, customers);
+    }
 
     if (!cachedOrders) setCached('orders', key, orders);
     if (!cachedProducts) setCached('products', key, products);
-    if (!cachedCustomers) setCached('customers', key, customers);
     if (!cachedReport) setCached('report', key, report);
 
-    return res.json({ orders, products, customers, report });
+    return res.json({
+      orders,
+      products,
+      customers,
+      report,
+      date_min: startDate,
+      date_max: endDate,
+    });
   } catch (err) {
     console.error('Bootstrap API error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 // ------------------ HEALTH ------------------
 app.get('/api/health', (req, res) => {
@@ -285,6 +321,10 @@ app.post('/api/auth/test', async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+app.get("/api/server-time", (req, res) => {
+  res.json({ now: new Date().toISOString() });
 });
 
 // Orders
@@ -313,6 +353,53 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
+async function getRazorpayPayment(paymentId) {
+  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+    throw new Error('Razorpay keys are not configured on the server');
+  }
+
+  const authToken = Buffer.from(
+    `${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`,
+    'utf8'
+  ).toString('base64');
+
+  const url = `https://api.razorpay.com/v1/payments/${paymentId}`;
+
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Basic ${authToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error('Razorpay payment API error:', response.status, text);
+    throw new Error(`Razorpay API error: ${response.status}`);
+  }
+
+  return response.json(); // Razorpay payment object
+}
+
+/**
+ * 🔹 Backend endpoint to fetch Razorpay payment details
+ * Body: { transaction_id: "pay_xxx" }
+ */
+app.post('/api/razorpay/payment', async (req, res) => {
+  try {
+    const { transaction_id } = req.body || {};
+    if (!transaction_id) {
+      return res.status(400).json({ error: 'transaction_id is required' });
+    }
+
+    const payment = await getRazorpayPayment(transaction_id);
+    return res.json({ payment });
+  } catch (err) {
+    console.error('Razorpay payment route error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // Categories (still expects config in query for now)
 app.get('/api/categories', async (req, res) => {
   try {
@@ -325,6 +412,84 @@ app.get('/api/categories', async (req, res) => {
   }
 });
 
+function enrichCustomersWithOrders(customersBase, orders) {
+  const statsByCustomerId = new Map();
+  const statsByEmail = new Map();
+
+  orders.forEach((order) => {
+    const customerId = order.customer_id;
+    const email = order.billing_email?.toLowerCase();
+    const orderTotal = Number(order.total) || 0;
+
+    // Map by customer_id
+    if (customerId && customerId !== 0) {
+      const existing = statsByCustomerId.get(customerId) || {
+        total_spent: 0,
+        orders_count: 0,
+        orders: [],
+      };
+
+      existing.total_spent += orderTotal;
+      existing.orders_count += 1;
+      existing.orders.push({
+        id: order.id,
+        total: order.total,
+        status: order.status,
+        date: order.date,
+        items: order.items,
+      });
+
+      statsByCustomerId.set(customerId, existing);
+    }
+
+    // Map by email (guests / fallback)
+    if (email) {
+      const existing = statsByEmail.get(email) || {
+        total_spent: 0,
+        orders_count: 0,
+        orders: [],
+      };
+
+      existing.total_spent += orderTotal;
+      existing.orders_count += 1;
+      existing.orders.push({
+        id: order.id,
+        total: order.total,
+        status: order.status,
+        date: order.date,
+        items: order.items,
+      });
+
+      statsByEmail.set(email, existing);
+    }
+  });
+
+  const customers = customersBase.map((customer) => {
+    let stats = null;
+
+    if (customer.id && customer.id !== 0) {
+      stats = statsByCustomerId.get(customer.id);
+    }
+
+    if (!stats && customer.email) {
+      stats = statsByEmail.get(customer.email.toLowerCase());
+    }
+
+    return {
+      ...customer,
+      total_spent: stats ? stats.total_spent : 0,
+      orders_count: stats ? stats.orders_count : 0,
+      orders: stats ? stats.orders : [],
+    };
+  });
+
+  // Sort by total_spent desc
+  customers.sort((a, b) => b.total_spent - a.total_spent);
+
+  return customers;
+}
+
+
 // Customers (enriched)
 app.post('/api/customers', async (req, res) => {
   try {
@@ -336,42 +501,7 @@ app.post('/api/customers', async (req, res) => {
       WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
     ]);
 
-    const statsByKey = new Map();
-
-    orders.forEach((o) => {
-      let key = null;
-      if (o.customer_id && o.customer_id !== 0) {
-        key = `id:${o.customer_id}`;
-      } else if (o.billing_email) {
-        key = `email:${o.billing_email.toLowerCase()}`;
-      }
-      if (!key) return;
-
-      const existing = statsByKey.get(key) || {
-        total_spent: 0,
-        orders_count: 0,
-      };
-
-      existing.total_spent += Number(o.total) || 0;
-      existing.orders_count += 1;
-
-      statsByKey.set(key, existing);
-    });
-
-    const customers = customersBase.map((c) => {
-      let stats = null;
-      if (c.id) {
-        stats = statsByKey.get(`id:${c.id}`) || null;
-      }
-      if (!stats && c.email) {
-        stats = statsByKey.get(`email:${c.email.toLowerCase()}`) || null;
-      }
-      return {
-        ...c,
-        total_spent: stats ? stats.total_spent : 0,
-        orders_count: stats ? stats.orders_count : 0,
-      };
-    });
+    const customers = enrichCustomersWithOrders(customersBase, orders);
 
     res.json({ customers });
   } catch (err) {

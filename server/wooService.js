@@ -51,17 +51,11 @@ getOrders: async (config, useMock) => {
         totalPages = headerVal ? parseInt(headerVal, 10) : 0;
       }
 
-      // Stop when:
-      // - no header OR
-      // - we reached the last page OR
-      // - batch returned less than perPage (safety)
       if (!totalPages || page >= totalPages || batch.length < perPage) {
         break;
       }
 
       page += 1;
-
-      // hard safety cap so we don't DDOS if something is wrong
       if (page > 50) break;
     }
 
@@ -80,10 +74,15 @@ getOrders: async (config, useMock) => {
       line_items: order.line_items,
       billing: order.billing,
       shipping: order.shipping,
-      payment_method: order.payment_method_title,
+
+      // 🔹 important bits for Razorpay UI
+      payment_method: order.payment_method,              // e.g. "razorpay"
+      payment_method_title: order.payment_method_title,  // "Credit Card/Debit Card/NetBanking"
+      transaction_id: order.transaction_id || null,      // e.g. "pay_RkeOYgW1wid0m1"
+
       currency_symbol: order.currency_symbol,
       shipping_total: parseFloat(order.shipping_total || '0') || 0,
-  discount_total: parseFloat(order.discount_total || '0') || 0,
+      discount_total: parseFloat(order.discount_total || '0') || 0,
     }));
   } catch (err) {
     console.error('Fetch Orders Error:', err);
