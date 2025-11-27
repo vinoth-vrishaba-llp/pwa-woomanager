@@ -1,47 +1,60 @@
-import React, { useState, useMemo } from 'react';
-import { Package, RefreshCw, Search, CalendarRange, X } from 'lucide-react';
-import StatusBadge from './ui/StatusBadge';
-import LoadingState from './ui/LoadingState';
-import ErrorState from './ui/ErrorState';
+import React, { useState, useMemo } from "react";
+import { Package, RefreshCw, Search, CalendarRange, X } from "lucide-react";
+import StatusBadge from "./ui/StatusBadge";
+import LoadingState from "./ui/LoadingState";
+import ErrorState from "./ui/ErrorState";
 
-const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder }) => {
-  const [statusFilter, setStatusFilter] = useState('all'); // all | processing | completed | cancelled
-  const [searchQuery, setSearchQuery] = useState('');
-  const [fromDate, setFromDate] = useState('');
-  const [toDate, setToDate] = useState('');
-  const [quickRange, setQuickRange] = useState('none'); // 'none' | 'today' | '7d' | '30d'
+const OrdersList = ({
+  orders,
+  loading,
+  error,
+  onRefresh,
+  onLogout,
+  onSelectOrder,
+}) => {
+  const [statusFilter, setStatusFilter] = useState("all"); // all | processing | completed | cancelled
+  const [searchQuery, setSearchQuery] = useState("");
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [quickRange, setQuickRange] = useState("none"); // 'none' | 'today' | '7d' | '30d'
 
   const safeOrders = Array.isArray(orders) ? orders : [];
 
   // ---- Counts for pills ----
-  const { allCount, processingCount, completedCount, cancelledCount } = useMemo(() => {
-    let processing = 0;
-    let completed = 0;
-    let cancelled = 0;
+  const { allCount, processingCount, completedCount, cancelledCount } =
+    useMemo(() => {
+      let processing = 0;
+      let completed = 0;
+      let cancelled = 0;
 
-    safeOrders.forEach((o) => {
-      if (o.status === 'processing') processing++;
-      if (o.status === 'completed') completed++;
-      if (o.status === 'cancelled') cancelled++;
-    });
+      safeOrders.forEach((o) => {
+        if (o.status === "processing") processing++;
+        if (o.status === "completed") completed++;
+        if (o.status === "cancelled") cancelled++;
+      });
 
-    return {
-      allCount: safeOrders.length,
-      processingCount: processing,
-      completedCount: completed,
-      cancelledCount: cancelled,
-    };
-  }, [safeOrders]);
+      return {
+        allCount: safeOrders.length,
+        processingCount: processing,
+        completedCount: completed,
+        cancelledCount: cancelled,
+      };
+    }, [safeOrders]);
 
   // ---- Date helpers ----
-  const formatDateInput = (date) => date.toISOString().slice(0, 10);
+  const formatDateInput = (date) => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`; // "YYYY-MM-DD" in local timezone
+  };
 
   const applyQuickRange = (range) => {
     if (quickRange === range) {
       // toggle off
-      setQuickRange('none');
-      setFromDate('');
-      setToDate('');
+      setQuickRange("none");
+      setFromDate("");
+      setToDate("");
       return;
     }
 
@@ -51,35 +64,35 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
     let from = null;
     let to = new Date(today); // clone
 
-    if (range === 'today') {
+    if (range === "today") {
       from = new Date(today);
-    } else if (range === '7d') {
+    } else if (range === "7d") {
       from = new Date(today);
       from.setDate(from.getDate() - 6); // last 7 days including today
-    } else if (range === '30d') {
+    } else if (range === "30d") {
       from = new Date(today);
       from.setDate(from.getDate() - 29); // last 30 days including today
     }
 
     setQuickRange(range);
-    setFromDate(from ? formatDateInput(from) : '');
+    setFromDate(from ? formatDateInput(from) : "");
     setToDate(formatDateInput(to));
   };
 
   const handleFromDateChange = (value) => {
-    setQuickRange('none');
+    setQuickRange("none");
     setFromDate(value);
   };
 
   const handleToDateChange = (value) => {
-    setQuickRange('none');
+    setQuickRange("none");
     setToDate(value);
   };
 
   const clearDates = () => {
-    setFromDate('');
-    setToDate('');
-    setQuickRange('none');
+    setFromDate("");
+    setToDate("");
+    setQuickRange("none");
   };
 
   const hasActiveDateFilter = Boolean(fromDate || toDate);
@@ -89,16 +102,16 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
     let result = [...safeOrders];
 
     // Status filter
-    if (statusFilter !== 'all') {
+    if (statusFilter !== "all") {
       result = result.filter((o) => o.status === statusFilter);
     }
 
-    // Search filter (by id, customer name)
-    if (searchQuery.trim() !== '') {
+    // Search filter
+    if (searchQuery.trim() !== "") {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter((o) => {
-        const idStr = String(o.id || '').toLowerCase();
-        const customer = (o.customer || '').toLowerCase();
+        const idStr = String(o.id || "").toLowerCase();
+        const customer = (o.customer || "").toLowerCase();
         return idStr.includes(q) || customer.includes(q);
       });
     }
@@ -108,7 +121,6 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
       const from = fromDate ? new Date(fromDate) : null;
       const to = toDate ? new Date(toDate) : null;
       if (to) {
-        // include entire "to" day
         to.setHours(23, 59, 59, 999);
       }
 
@@ -123,11 +135,16 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
       });
     }
 
+    // Newest first
+    result.sort((a, b) => new Date(b.date) - new Date(a.date));
+
     return result;
   }, [safeOrders, statusFilter, searchQuery, fromDate, toDate]);
 
   const resultCount = filteredOrders.length;
-  const resultLabel = `${resultCount} ${resultCount === 1 ? 'order' : 'orders'} found`;
+  const resultLabel = `${resultCount} ${
+    resultCount === 1 ? "order" : "orders"
+  } found`;
 
   return (
     <div className="pb-24 pt-16 px-4 animate-fade-in min-h-screen">
@@ -141,7 +158,7 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
           >
             <RefreshCw
               size={20}
-              className={`text-gray-600 ${loading ? 'animate-spin' : ''}`}
+              className={`text-gray-600 ${loading ? "animate-spin" : ""}`}
             />
           </button>
         </div>
@@ -170,33 +187,33 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
         <div className="flex gap-2 overflow-x-auto no-scrollbar text-xs">
           <button
             type="button"
-            onClick={() => applyQuickRange('today')}
+            onClick={() => applyQuickRange("today")}
             className={`px-3 py-1.5 rounded-full border whitespace-nowrap ${
-              quickRange === 'today'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-700 border-gray-200'
+              quickRange === "today"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-700 border-gray-200"
             }`}
           >
             Today
           </button>
           <button
             type="button"
-            onClick={() => applyQuickRange('7d')}
+            onClick={() => applyQuickRange("7d")}
             className={`px-3 py-1.5 rounded-full border whitespace-nowrap ${
-              quickRange === '7d'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-700 border-gray-200'
+              quickRange === "7d"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-700 border-gray-200"
             }`}
           >
             Last 7 days
           </button>
           <button
             type="button"
-            onClick={() => applyQuickRange('30d')}
+            onClick={() => applyQuickRange("30d")}
             className={`px-3 py-1.5 rounded-full border whitespace-nowrap ${
-              quickRange === '30d'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-700 border-gray-200'
+              quickRange === "30d"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-700 border-gray-200"
             }`}
           >
             Last 30 days
@@ -246,41 +263,41 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
         {/* Status filter pills with counts */}
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
           <button
-            onClick={() => setStatusFilter('all')}
+            onClick={() => setStatusFilter("all")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
-              statusFilter === 'all'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                : 'bg-white border-gray-200 text-gray-600'
+              statusFilter === "all"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
+                : "bg-white border-gray-200 text-gray-600"
             }`}
           >
             All ({allCount})
           </button>
           <button
-            onClick={() => setStatusFilter('processing')}
+            onClick={() => setStatusFilter("processing")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
-              statusFilter === 'processing'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                : 'bg-white border-gray-200 text-gray-600'
+              statusFilter === "processing"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
+                : "bg-white border-gray-200 text-gray-600"
             }`}
           >
             Processing ({processingCount})
           </button>
           <button
-            onClick={() => setStatusFilter('completed')}
+            onClick={() => setStatusFilter("completed")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
-              statusFilter === 'completed'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                : 'bg-white border-gray-200 text-gray-600'
+              statusFilter === "completed"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
+                : "bg-white border-gray-200 text-gray-600"
             }`}
           >
             Completed ({completedCount})
           </button>
           <button
-            onClick={() => setStatusFilter('cancelled')}
+            onClick={() => setStatusFilter("cancelled")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
-              statusFilter === 'cancelled'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200'
-                : 'bg-white border-gray-200 text-gray-600'
+              statusFilter === "cancelled"
+                ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
+                : "bg-white border-gray-200 text-gray-600"
             }`}
           >
             Cancelled ({cancelledCount})
@@ -296,9 +313,7 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
       ) : (
         <div className="space-y-3 mt-3">
           {/* result count */}
-          <p className="text-xs text-gray-500">
-            {resultLabel}
-          </p>
+          <p className="text-xs text-gray-500">{resultLabel}</p>
 
           {filteredOrders.length === 0 && (
             <div className="text-center py-10 text-gray-400">
@@ -316,13 +331,13 @@ const OrdersList = ({ orders, loading, error, onRefresh, onLogout, onSelectOrder
                 <div className="flex items-center gap-3">
                   <div
                     className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${
-                      order.status === 'processing'
-                        ? 'bg-blue-500'
-                        : order.status === 'completed'
-                        ? 'bg-green-500'
-                        : order.status === 'cancelled'
-                        ? 'bg-red-400'
-                        : 'bg-gray-400'
+                      order.status === "processing"
+                        ? "bg-blue-500"
+                        : order.status === "completed"
+                        ? "bg-green-500"
+                        : order.status === "cancelled"
+                        ? "bg-red-400"
+                        : "bg-gray-400"
                     }`}
                   >
                     <Package size={18} />

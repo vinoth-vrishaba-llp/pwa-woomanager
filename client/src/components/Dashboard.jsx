@@ -1,5 +1,5 @@
 // client/src/components/Dashboard.jsx
-import React from 'react';
+import React from "react";
 import {
   Package,
   ShoppingBag,
@@ -8,10 +8,10 @@ import {
   IndianRupee,
   Users,
   Box,
-} from 'lucide-react';
-import StatusBadge from './ui/StatusBadge';
-import LoadingState from './ui/LoadingState';
-import ErrorState from './ui/ErrorState';
+} from "lucide-react";
+import StatusBadge from "./ui/StatusBadge";
+import LoadingState from "./ui/LoadingState";
+import ErrorState from "./ui/ErrorState";
 
 const Dashboard = ({
   navigate,
@@ -23,6 +23,7 @@ const Dashboard = ({
   salesReport,
   notificationsCount = 0,
   onSelectOrder,
+  onOpenNotifications, // NEW
 }) => {
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={onRefresh} />;
@@ -85,7 +86,7 @@ const Dashboard = ({
           <div>
             <h1 className="text-2xl font-bold">Dashboard</h1>
             <p className="text-purple-200 text-xs truncate max-w-[220px]">
-              {config.useMock ? 'Demo Store' : config.url}
+              {config.useMock ? "Demo Store" : config.url}
             </p>
           </div>
           <div className="flex gap-2">
@@ -96,13 +97,13 @@ const Dashboard = ({
               <RefreshCw size={20} />
             </button>
             <button
-              onClick={() => navigate('notifications')}
+              onClick={onOpenNotifications} // was: () => navigate('notifications')
               className="relative p-2 bg-purple-600 rounded-full hover:bg-purple-500 transition active:scale-90"
             >
               <Bell size={20} />
               {notificationsCount > 0 && (
                 <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-500 text-[10px] font-bold flex items-center justify-center">
-                  {notificationsCount > 9 ? '9+' : notificationsCount}
+                  {notificationsCount > 9 ? "9+" : notificationsCount}
                 </span>
               )}
             </button>
@@ -159,7 +160,7 @@ const Dashboard = ({
         </h3>
         <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
           <button
-            onClick={() => navigate('products')}
+            onClick={() => navigate("products")}
             className="flex flex-col items-center min-w-[80px] gap-2 group"
           >
             <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
@@ -168,16 +169,18 @@ const Dashboard = ({
             <span className="text-xs font-medium text-gray-600">Products</span>
           </button>
           <button
-            onClick={() => navigate('orders')}
+            onClick={() => navigate("orders")}
             className="flex flex-col items-center min-w-[80px] gap-2 group"
           >
             <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
               <ShoppingBag size={22} />
             </div>
-            <span className="text-xs font-medium text-gray-600">View Orders</span>
+            <span className="text-xs font-medium text-gray-600">
+              View Orders
+            </span>
           </button>
           <button
-            onClick={() => navigate('customers')}
+            onClick={() => navigate("customers")}
             className="flex flex-col items-center min-w-[80px] gap-2 group"
           >
             <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
@@ -195,7 +198,7 @@ const Dashboard = ({
             Last 7 days orders
           </h3>
           <button
-            onClick={() => navigate('orders')}
+            onClick={() => navigate("orders")}
             className="text-purple-600 text-xs font-medium"
           >
             View all
@@ -216,22 +219,22 @@ const Dashboard = ({
               >
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold text-[11px]">
-                    {order.customer?.charAt(0) || 'O'}
+                    {order.customer?.charAt(0) || "O"}
                   </div>
                   <div>
                     <div className="font-semibold text-gray-800 text-sm">
-                      #{order.id} • {order.customer || 'Customer'}
+                      #{order.id} • {order.customer || "Customer"}
                     </div>
                     <div className="text-[11px] text-gray-500">
-                      {order.items} items •{' '}
+                      {order.items} items •{" "}
                       {order.date
                         ? new Date(order.date).toLocaleString(undefined, {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
+                            month: "short",
+                            day: "numeric",
+                            hour: "2-digit",
+                            minute: "2-digit",
                           })
-                        : ''}
+                        : ""}
                     </div>
                   </div>
                 </div>
@@ -254,7 +257,7 @@ const Dashboard = ({
             Recent Orders
           </h3>
           <button
-            onClick={() => navigate('orders')}
+            onClick={() => navigate("orders")}
             className="text-purple-600 text-sm font-medium"
           >
             View All

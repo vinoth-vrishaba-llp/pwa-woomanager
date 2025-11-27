@@ -1,7 +1,9 @@
+// client/src/components/SettingsView.jsx
 import React from 'react';
 import { Bell, Truck, IndianRupee, ChevronRight, ShieldAlert, LogOut } from 'lucide-react';
 
-const SettingsView = ({ config, onLogout }) => (
+const SettingsView = ({ config, onLogout, notificationsCount = 0, onOpenNotifications }) => (
+
   <div className="pb-24 pt-16 px-4 animate-fade-in">
     <div className="fixed top-0 left-0 right-0 bg-white z-10 px-4 py-4 border-b border-gray-100">
       <h1 className="text-xl font-bold text-gray-800">Settings</h1>
@@ -46,15 +48,20 @@ const SettingsView = ({ config, onLogout }) => (
     </div>
 
     <div className="mt-6 space-y-2">
-      <button className="w-full bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center text-gray-700 hover:bg-gray-50 transition">
+      <button
+        onClick={onOpenNotifications}
+        className="w-full bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center text-gray-700 hover:bg-gray-50 transition"
+      >
         <div className="flex items-center gap-3">
-          <Bell size={20} className="text-gray-400" /> Notifications
-        </div>
-        <ChevronRight size={16} className="text-gray-400" />
-      </button>
-      <button className="w-full bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center text-gray-700 hover:bg-gray-50 transition">
-        <div className="flex items-center gap-3">
-          <IndianRupee size={20} className="text-gray-400" /> Payments
+          <div className="relative flex items-center gap-2">
+            <Bell size={20} className="text-gray-400" />
+            <span>Notifications</span>
+            {notificationsCount > 0 && (
+              <span className="ml-1 inline-flex items-center justify-center min-w-[18px] h-4 px-1 rounded-full bg-red-500 text-[10px] font-bold text-white">
+                {notificationsCount > 9 ? '9+' : notificationsCount}
+              </span>
+            )}
+          </div>
         </div>
         <ChevronRight size={16} className="text-gray-400" />
       </button>
@@ -66,7 +73,10 @@ const SettingsView = ({ config, onLogout }) => (
     >
       <LogOut size={18} /> Log Out
     </button>
-    <div className="text-center mt-6 text-xs text-gray-400">WooManager v2.3 (Order Details)</div>
+
+    <div className="text-center mt-6 text-xs text-gray-400">
+      WooManager v2.3 (Order Details)
+    </div>
   </div>
 );
 

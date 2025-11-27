@@ -7,6 +7,7 @@ import {
   MapPin,
   ShoppingBag,
   IndianRupee,
+  Package,
 } from 'lucide-react';
 
 const CustomerDetails = ({ customer, onBack }) => {
@@ -14,6 +15,7 @@ const CustomerDetails = ({ customer, onBack }) => {
 
   const billing = customer.billing || {};
   const shipping = customer.shipping || {};
+  const orders = customer.orders || [];
 
   const formattedDate =
     customer.date_created &&
@@ -24,6 +26,19 @@ const CustomerDetails = ({ customer, onBack }) => {
       hour: '2-digit',
       minute: '2-digit',
     });
+
+  const getStatusColor = (status) => {
+    const colors = {
+      completed: 'bg-green-100 text-green-700',
+      processing: 'bg-blue-100 text-blue-700',
+      'on-hold': 'bg-yellow-100 text-yellow-700',
+      pending: 'bg-orange-100 text-orange-700',
+      cancelled: 'bg-red-100 text-red-700',
+      refunded: 'bg-gray-100 text-gray-700',
+      failed: 'bg-red-100 text-red-700',
+    };
+    return colors[status] || 'bg-gray-100 text-gray-700';
+  };
 
   return (
     <div className="pb-24 pt-0 px-0 animate-fade-in min-h-screen bg-gray-50 z-20 absolute inset-0">
@@ -107,6 +122,55 @@ const CustomerDetails = ({ customer, onBack }) => {
                 Email
               </a>
             )}
+          </div>
+        )}
+
+        {/* Orders List */}
+        {orders.length > 0 && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+            <div className="p-4 border-b border-gray-100">
+              <h3 className="font-bold text-sm text-gray-800 flex items-center gap-2">
+                <Package size={16} />
+                Order History ({orders.length})
+              </h3>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {orders.map((order) => {
+                const orderDate = new Date(order.date).toLocaleDateString(undefined, {
+                  month: 'short',
+                  day: 'numeric',
+                  year: 'numeric',
+                });
+
+                return (
+                  <div key={order.id} className="p-4 hover:bg-gray-50 transition">
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-800">
+                          Order #{order.id}
+                        </div>
+                        <div className="text-xs text-gray-500">{orderDate}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-sm font-bold text-gray-800">
+                          ₹{Number(order.total).toFixed(2)}
+                        </div>
+                        <div className="text-xs text-gray-500">{order.items} item(s)</div>
+                      </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full font-medium ${getStatusColor(
+                          order.status
+                        )}`}
+                      >
+                        {order.status}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
