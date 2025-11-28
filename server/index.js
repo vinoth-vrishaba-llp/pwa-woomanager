@@ -106,12 +106,15 @@ app.post('/api/auth/woo/start', (req, res) => {
       return res.status(400).json({ error: 'store_url and app_user_id are required' });
     }
 
+    // ✅ Use extractDomain to get ONLY the domain (no https://)
+    const domain = WooService.extractDomain(store_url);
+    // Use cleanUrl for the full URL with protocol
     const base = WooService.cleanUrl(store_url);
     const endpoint = '/wc-auth/v1/authorize';
 
-    // ✅ FIXED: Create pipe-delimited user_id on backend
-    // Format: "app_user_id|cleaned_store_url"
-    const encodedUserId = `${app_user_id}|${base}`;
+    // ✅ Create pipe-delimited user_id with DOMAIN ONLY
+    // Format: "app_user_id|domain" (e.g., "pwa-user-1|shop.bharatkewow.com")
+    const encodedUserId = `${app_user_id}|${domain}`;
 
     const params = new URLSearchParams({
       app_name: WOO_APP_NAME,
@@ -123,8 +126,10 @@ app.post('/api/auth/woo/start', (req, res) => {
 
     const authUrl = `${base}${endpoint}?${params.toString()}`;
     
-    console.log('Starting WooCommerce SSO:', {
-      store_url: base,
+    console.log('🚀 Starting WooCommerce SSO:', {
+      original_store_url: store_url,
+      domain: domain,
+      full_base_url: base,
       app_user_id,
       encoded_user_id: encodedUserId,
     });
@@ -160,8 +165,10 @@ app.post('/api/auth/woo/callback', async (req, res) => {
       // Expected format: "pwa-user-1|shop.bharatkewow.com"
       const parts = String(user_id).split('|');
       appUserId = parts[0];
-      const storeUrlRaw = parts[1];
-      store_url = WooService.cleanUrl(storeUrlRaw || '');
+      const domainPart = parts[1];
+      
+      // ✅ Use extractDomain to clean it (in case it has protocol)
+      store_url = WooService.extractDomain(domainPart);
       
       console.log('✅ Parsed user_id correctly:', { appUserId, store_url });
     } else {
@@ -174,7 +181,7 @@ app.post('/api/auth/woo/callback', async (req, res) => {
       if (domainMatch) {
         const extractedDomain = domainMatch[1];
         appUserId = String(user_id).replace(extractedDomain, '').replace(/[^a-zA-Z0-9-_]/g, '');
-        store_url = WooService.cleanUrl(extractedDomain);
+        store_url = WooService.extractDomain(extractedDomain);
         console.log('⚠️ Extracted from malformed user_id:', { appUserId, store_url });
       } else {
         // Cannot parse - treat entire string as app_user_id
@@ -215,8 +222,9 @@ app.post('/api/auth/woo/callback', async (req, res) => {
     });
 
     // 2) Create webhook for order.created
+    // ✅ Use cleanUrl for the full URL with https://
     const configForWebhook = {
-      url: store_url,
+      url: WooService.cleanUrl(store_url),
       key: consumer_key,
       secret: consumer_secret,
       useProxy: false,
