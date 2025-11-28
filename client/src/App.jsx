@@ -218,7 +218,7 @@ if (path.startsWith("/sso-complete")) {
       }
 
       const json = await res.json();
-      console.log("BOOTSTRAP PAYLOAD:", json);
+      //console.log("BOOTSTRAP PAYLOAD:", json);
 
       setData({
         orders: json.orders || [],
