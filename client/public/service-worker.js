@@ -1,25 +1,14 @@
 // client/public/service-worker.js
 /* global self, clients */
 
-const SHELL_CACHE = 'woomanager-shell-v1';
+const SHELL_CACHE = 'woomanager-shell-v2';
 const API_CACHE = 'woomanager-api-v1';
 
-const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/manifest.webmanifest',
-];
-
-// ---- INSTALL ----
 self.addEventListener('install', (event) => {
   console.log('[SW] install');
-  event.waitUntil(
-    caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL))
-  );
   self.skipWaiting();
 });
 
-// ---- ACTIVATE ----
 self.addEventListener('activate', (event) => {
   console.log('[SW] activate');
   event.waitUntil(
@@ -34,15 +23,12 @@ self.addEventListener('activate', (event) => {
   clients.claim();
 });
 
-// ---- FETCH ----
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
   // Only touch GET requests
-  if (request.method !== 'GET') {
-    return;
-  }
+  if (request.method !== 'GET') return;
 
   // API: network-first, cache fallback
   if (url.pathname.startsWith('/api/')) {
@@ -58,13 +44,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Navigations: always serve app shell
+  // Navigations: let network win, fallback to cached index if offline
   if (request.mode === 'navigate') {
     event.respondWith(
-      caches.match('/index.html').then((cached) => {
-        if (cached) return cached;
-        return fetch('/index.html');
-      })
+      fetch(request).catch(() => caches.match('/index.html'))
     );
     return;
   }

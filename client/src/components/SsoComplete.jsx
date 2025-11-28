@@ -52,7 +52,7 @@ const SsoComplete = () => {
           ? appUserId.split('__')[0] 
           : appUserId;
 
-        console.log('Fetching store for app_user_id:', cleanAppUserId);
+       //onsole.log('Fetching store for app_user_id:', cleanAppUserId);
 
         const res = await fetch(`${API_BASE_URL}/api/store/by-app-user`, {
           method: 'POST',
@@ -67,7 +67,7 @@ const SsoComplete = () => {
         }
 
         const json = await res.json();
-        console.log('Store info received:', json);
+       //onsole.log('Store info received:', json);
         setStoreInfo(json);
 
         // Save SSO session – NO keys
