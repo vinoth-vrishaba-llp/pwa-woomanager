@@ -1,8 +1,16 @@
 // client/src/App.jsx
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Home, Package, ShoppingBag, BarChart2, Settings } from "lucide-react";
+import {
+  Home,
+  Package,
+  ShoppingBag,
+  BarChart2,
+  Settings,
+  Loader,
+} from "lucide-react";
 
-import LoginView from "./components/LoginView";
+import AuthView from "./components/AuthView";
+import ConnectStoreView from "./components/ConnectStoreView";
 import Dashboard from "./components/Dashboard";
 import OrdersList from "./components/OrdersList";
 import OrderDetails from "./components/OrderDetails";
@@ -22,9 +30,14 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const App = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
 
+  // ✅ NEW: User authentication state
+  const [authLoading, setAuthLoading] = useState(true);
+  const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
+
   // unified session:
   // { type:'sso', store_id, store_url, app_user_id }
-  // or { type:'manual', config: { url, key, secret, useProxy, useMock } }
+  // or { type:'manual', config: { url, key, secret, useProxy, useMock } } - kept for demo mode
   const [session, setSession] = useState(null);
 
   const [data, setData] = useState({
@@ -51,58 +64,96 @@ const App = () => {
     return <SsoComplete />;
   }
 
+  // ✅ NEW: Check authentication on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      const savedToken = localStorage.getItem("woo_manager_token");
+
+      if (!savedToken) {
+        setAuthLoading(false);
+        return;
+      }
+
+      try {
+        // Verify token with backend
+        const res = await fetch(`${API_BASE_URL}/api/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${savedToken}`,
+          },
+        });
+
+        if (!res.ok) {
+          throw new Error("Invalid token");
+        }
+
+        const responseData = await res.json();
+        setUser(responseData.user);
+        setToken(savedToken);
+
+        // If user has store connected, set up session
+        if (responseData.user.has_store_connected) {
+          setSession({
+            type: "sso",
+            store_id: responseData.user.id,
+            store_url: responseData.user.store_url,
+            app_user_id: responseData.user.app_user_id,
+          });
+        }
+      } catch (err) {
+        console.error("Auth check failed:", err);
+        // Clear invalid token
+        localStorage.removeItem("woo_manager_token");
+        localStorage.removeItem("woo_manager_user");
+      } finally {
+        setAuthLoading(false);
+      }
+    };
+
+    checkAuth();
+  }, []);
+
   useEffect(() => {
     const fetchServerTime = async () => {
       try {
         const res = await fetch(`${API_BASE_URL}/api/server-time`);
         if (!res.ok) throw new Error("Failed to fetch server time");
-        const json = await res.json(); // expect { now: "2025-11-27T..." }
+        const json = await res.json();
         setServerTimeIso(json.now);
       } catch (e) {
         console.warn(
           "Failed to load server time, falling back to client clock",
           e
         );
-        setServerTimeIso(null); // Analytics will fall back to new Date()
+        setServerTimeIso(null);
       }
     };
 
     fetchServerTime();
   }, []);
-  // -------- Load session from localStorage --------
-  useEffect(() => {
-    const ssoRaw = localStorage.getItem("woo_manager_store");
-    if (ssoRaw) {
-      try {
-        const parsed = JSON.parse(ssoRaw);
-        if (parsed && parsed.store_id && parsed.store_url) {
-          setSession({ type: "sso", ...parsed });
-          return;
-        }
-      } catch {
-        // ignore
-      }
-    }
 
-    // fallback: legacy manual config
-    const legacyConfigRaw = localStorage.getItem("woo_manager_config");
-    if (legacyConfigRaw) {
-      try {
-        const cfg = JSON.parse(legacyConfigRaw);
-        setSession({ type: "manual", config: cfg });
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
+  // ✅ NEW: Auth success handler
+  const handleAuthSuccess = (userData, authToken) => {
+    setUser(userData);
+    setToken(authToken);
 
-  // -------- Auth / session handlers --------
-  const handleLogin = (config) => {
-    // manual mode (NOT recommended for production, but kept for now)
-    setSession({ type: "manual", config });
-    localStorage.setItem("woo_manager_config", JSON.stringify(config));
+    // If user already has store connected, set up session
+    if (userData.has_store_connected) {
+      setSession({
+        type: "sso",
+        store_id: userData.id,
+        store_url: userData.store_url,
+        app_user_id: userData.app_user_id,
+      });
+    }
   };
 
+  // ✅ NEW: Store connected handler
+  const handleStoreConnected = () => {
+    // Refresh user data
+    window.location.reload();
+  };
+
+  // -------- Demo mode (kept for testing) --------
   const handleDemo = () => {
     const demoConfig = {
       useMock: true,
@@ -115,7 +166,10 @@ const App = () => {
     localStorage.setItem("woo_manager_config", JSON.stringify(demoConfig));
   };
 
+  // ✅ UPDATED: Logout handler
   const handleLogout = () => {
+    setUser(null);
+    setToken(null);
     setSession(null);
     setData({ orders: [], products: [], customers: [] });
     setSalesReport(null);
@@ -123,7 +177,9 @@ const App = () => {
     setActiveTab("dashboard");
     setSelectedOrder(null);
     setSelectedCustomer(null);
-    setNotificationsSeenAt(null); // NEW
+    setNotificationsSeenAt(null);
+    localStorage.removeItem("woo_manager_token");
+    localStorage.removeItem("woo_manager_user");
     localStorage.removeItem("woo_manager_store");
     localStorage.removeItem("woo_manager_config");
   };
@@ -192,12 +248,11 @@ const App = () => {
     setRazorpayPayment(null);
     setRazorpayError(null);
 
-    // we only care about Razorpay orders with a transaction_id
     const txId = order.transaction_id;
     const methodSlug = (order.payment_method || "").toLowerCase();
 
     if (!txId || methodSlug !== "razorpay") {
-      return; // for non-Razorpay or missing id, card will show "Not fetched"
+      return;
     }
 
     try {
@@ -218,6 +273,7 @@ const App = () => {
     setNotificationsSeenAt(new Date().toISOString());
     setActiveTab("notifications");
   };
+
   // -------- Derived notifications (last 24h orders) --------
   const derivedNotifications = useMemo(() => {
     const safeOrders = Array.isArray(data.orders) ? data.orders : [];
@@ -252,13 +308,30 @@ const App = () => {
     }).length;
   }, [derivedNotifications, notificationsSeenAt]);
 
-  // -------- If not logged in, show login --------
-  if (!session) {
-    return <LoginView onLogin={handleLogin} onDemo={handleDemo} />;
+  // ✅ NEW: Auth loading state
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-purple-700 flex items-center justify-center">
+        <Loader className="animate-spin text-white" size={40} />
+      </div>
+    );
   }
 
-  const storeUrl =
-    session.type === "sso" ? session.store_url : session.config?.url || "Store";
+  // ✅ NEW: Authentication flow
+  // 1. No user -> Show AuthView (Login/Signup)
+  if (!user) {
+    return <AuthView onAuthSuccess={handleAuthSuccess} />;
+  }
+
+  // 2. User exists but no store connected -> Show ConnectStoreView
+  if (!user.has_store_connected) {
+    return (
+      <ConnectStoreView user={user} onStoreConnected={handleStoreConnected} />
+    );
+  }
+
+  // 3. User exists and store connected -> Show Dashboard
+  const storeUrl = session?.store_url || user.store_url || "Store";
 
   // -------- Screen switch --------
   const renderContent = () => {
@@ -273,12 +346,12 @@ const App = () => {
             onRefresh={fetchAllData}
             config={{
               url: storeUrl,
-              useMock: session.type === "manual" && session.config.useMock,
+              useMock: session?.type === "manual" && session.config.useMock,
             }}
             salesReport={salesReport}
-            notificationsCount={notificationsCount} // NEW
+            notificationsCount={notificationsCount}
             onSelectOrder={handleSelectOrder}
-            onOpenNotifications={handleOpenNotifications} // NEW
+            onOpenNotifications={handleOpenNotifications}
           />
         );
       case "orders":
@@ -311,7 +384,7 @@ const App = () => {
             error={error}
             onRefresh={fetchAllData}
             session={session}
-            serverTimeIso={serverTimeIso} // now it actually exists
+            serverTimeIso={serverTimeIso}
           />
         );
       case "settings":
@@ -319,11 +392,11 @@ const App = () => {
           <SettingsView
             config={{
               url: storeUrl,
-              useMock: session.type === "manual" && session.config?.useMock,
+              useMock: session?.type === "manual" && session.config?.useMock,
             }}
             onLogout={handleLogout}
-            notificationsCount={notificationsCount} // NEW
-            onOpenNotifications={handleOpenNotifications} // NEW
+            notificationsCount={notificationsCount}
+            onOpenNotifications={handleOpenNotifications}
           />
         );
       case "customers":
@@ -349,7 +422,7 @@ const App = () => {
           <OrderDetails
             order={selectedOrder}
             onBack={() => setActiveTab("orders")}
-            razorpayPayment={razorpayPayment} // 🔹 here
+            razorpayPayment={razorpayPayment}
           />
         );
       case "notifications":

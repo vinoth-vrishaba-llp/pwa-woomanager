@@ -4,6 +4,8 @@ const express = require('express');
 const cors = require('cors');
 const WooService = require('./wooService');
 const Baserow = require('./baserowClient');
+const jwt = require('jsonwebtoken'); // npm install jsonwebtoken
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -98,12 +100,172 @@ async function resolveConfig({ config, store_id }) {
   throw new Error('No config or store_id provided');
 }
 
+
+
+// ------------------ USER SIGNUP ------------------
+app.post('/api/auth/signup', async (req, res) => {
+  try {
+    const { username, password, store_url } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    // Validate username (alphanumeric, min 3 chars)
+    if (!/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
+      return res.status(400).json({ 
+        error: 'Username must be 3-20 characters (letters, numbers, -, _)' 
+      });
+    }
+
+    // Validate password (min 6 chars)
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await Baserow.createUser(username, password, store_url);
+
+    // Create JWT token
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        username: user.username, 
+        app_user_id: user.app_user_id 
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    console.log('✅ User created:', { username, app_user_id: user.app_user_id });
+
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        app_user_id: user.app_user_id,
+        has_store_connected: user.has_store_connected,
+      },
+    });
+  } catch (err) {
+    console.error('Signup error:', err);
+    
+    // Check if user already exists
+    if (err.message && err.message.includes('already exists')) {
+      return res.status(409).json({ error: 'Username already exists. Please choose another or sign in.' });
+    }
+    
+    return res.status(400).json({ error: err.message });
+  }
+});
+
+// ------------------ USER LOGIN ------------------
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password are required' });
+    }
+
+    const user = await Baserow.authenticateUser(username, password);
+
+    // Create JWT token
+    const token = jwt.sign(
+      { 
+        id: user.id, 
+        username: user.username, 
+        app_user_id: user.app_user_id 
+      },
+      JWT_SECRET,
+      { expiresIn: '30d' }
+    );
+
+    console.log('✅ User logged in:', { username, app_user_id: user.app_user_id });
+
+    return res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        app_user_id: user.app_user_id,
+        store_url: user.store_url,
+        has_store_connected: user.has_store_connected,
+      },
+    });
+  } catch (err) {
+    console.error('Login error:', err);
+    
+    // Provide specific error messages
+    const errorMessage = err.message.toLowerCase();
+    
+    if (errorMessage.includes('user not found') || errorMessage.includes('no user found')) {
+      return res.status(404).json({ 
+        error: 'User not found',
+        message: 'No account exists with this username. Please sign up first.' 
+      });
+    }
+    
+    if (errorMessage.includes('invalid password') || errorMessage.includes('incorrect password')) {
+      return res.status(401).json({ error: 'Invalid password' });
+    }
+    
+    // Generic authentication failure
+    return res.status(401).json({ 
+      error: 'Authentication failed',
+      message: err.message 
+    });
+  }
+});
+
+// ------------------ VERIFY TOKEN (Get Current User) ------------------
+app.get('/api/auth/me', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, JWT_SECRET);
+
+    // Fetch fresh user data
+    const user = await Baserow.findStoreByAppUserId(decoded.app_user_id);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    return res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        app_user_id: user.app_user_id,
+        store_url: user.store_url,
+        has_store_connected: !!(user.consumer_key && user.consumer_secret),
+      },
+    });
+  } catch (err) {
+    console.error('Token verification error:', err);
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
+});
 // ------------------ WOO SSO: START AUTH ------------------
-app.post('/api/auth/woo/start', (req, res) => {
+app.post('/api/auth/woo/start', async (req, res) => {
   try {
     const { store_url, app_user_id } = req.body;
+    
     if (!store_url || !app_user_id) {
       return res.status(400).json({ error: 'store_url and app_user_id are required' });
+    }
+
+    // Verify user exists
+    const user = await Baserow.findStoreByAppUserId(app_user_id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
 
     // ✅ Use extractDomain to get ONLY the domain (no https://)
@@ -112,14 +274,14 @@ app.post('/api/auth/woo/start', (req, res) => {
     const base = WooService.cleanUrl(store_url);
     const endpoint = '/wc-auth/v1/authorize';
 
-    // ✅ Create user_id with DOUBLE UNDERSCORE delimiter (pipe gets stripped by WooCommerce)
-    // Format: "app_user_id__domain" (e.g., "pwa-user-1__shop.bharatkewow.com")
+    // ✅ Create user_id with DOUBLE UNDERSCORE delimiter
+    // Format: "app_user_id__domain" (e.g., "john-abc123__shop.bharatkewow.com")
     const encodedUserId = `${app_user_id}__${domain}`;
 
     const params = new URLSearchParams({
       app_name: WOO_APP_NAME,
       scope: 'read_write',
-      user_id: encodedUserId,  // ← Now properly formatted: "pwa-user-1|shop.bharatkewow.com"
+      user_id: encodedUserId,
       return_url: `${FRONTEND_ORIGIN}/sso-complete`,
       callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
     });
@@ -127,6 +289,7 @@ app.post('/api/auth/woo/start', (req, res) => {
     const authUrl = `${base}${endpoint}?${params.toString()}`;
     
     console.log('🚀 Starting WooCommerce SSO:', {
+      username: user.username,
       original_store_url: store_url,
       domain: domain,
       full_base_url: base,
@@ -136,7 +299,7 @@ app.post('/api/auth/woo/start', (req, res) => {
 
     return res.json({ authUrl });
   } catch (err) {
-    console.error('Auth start error:', err);
+    console.error('❌ Auth start error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
@@ -146,7 +309,7 @@ app.post('/api/auth/woo/callback', async (req, res) => {
   try {
     const { key_id, user_id, consumer_key, consumer_secret } = req.body || {};
 
-    console.log('Woo callback received:', { 
+    console.log('🔔 Woo callback received:', { 
       key_id, 
       user_id, 
       has_consumer_key: !!consumer_key, 
@@ -154,28 +317,25 @@ app.post('/api/auth/woo/callback', async (req, res) => {
     });
 
     if (!key_id || !user_id || !consumer_key || !consumer_secret) {
-      console.error('Invalid Woo callback payload:', req.body);
+      console.error('❌ Invalid Woo callback payload:', req.body);
       return res.status(400).json({ error: 'Invalid payload from Woo' });
     }
 
-    // ✅ Parse user_id with comprehensive error handling
+    // ✅ Parse user_id (using DOUBLE UNDERSCORE as delimiter)
     let appUserId, store_url;
 
-    if (String(user_id).includes('|')) {
-      // Expected format: "pwa-user-1|shop.bharatkewow.com"
-      const parts = String(user_id).split('|');
+    if (String(user_id).includes('__')) {
+      // Expected format: "john-abc123__shop.bharatkewow.com"
+      const parts = String(user_id).split('__');
       appUserId = parts[0];
       const domainPart = parts[1];
       
-      // ✅ Use extractDomain to clean it (in case it has protocol)
       store_url = WooService.extractDomain(domainPart);
-      
       console.log('✅ Parsed user_id correctly:', { appUserId, store_url });
     } else {
-      // Fallback: if no pipe delimiter found (should not happen with fix)
-      console.warn('⚠️ user_id missing pipe delimiter:', user_id);
+      console.warn('⚠️ user_id missing double underscore delimiter:', user_id);
       
-      // Try to extract store URL from user_id if it looks like a domain
+      // Fallback parsing
       const domainMatch = String(user_id).match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)$/);
       
       if (domainMatch) {
@@ -184,45 +344,37 @@ app.post('/api/auth/woo/callback', async (req, res) => {
         store_url = WooService.extractDomain(extractedDomain);
         console.log('⚠️ Extracted from malformed user_id:', { appUserId, store_url });
       } else {
-        // Cannot parse - treat entire string as app_user_id
         appUserId = String(user_id).trim();
         store_url = '';
         console.error('❌ Could not extract store URL from user_id:', user_id);
       }
     }
 
-    // Validate parsed values
-    if (!appUserId) {
-      console.error('❌ app_user_id is empty after parsing user_id:', user_id);
-      return res.status(400).json({ error: 'Invalid user_id format: could not extract app_user_id' });
-    }
-
-    if (!store_url) {
-      console.error('❌ store_url is empty after parsing user_id:', user_id);
-      return res.status(400).json({ error: 'Invalid user_id format: could not extract store_url' });
+    if (!appUserId || !store_url) {
+      console.error('❌ Invalid parsed values:', { appUserId, store_url });
+      return res.status(400).json({ error: 'Invalid user_id format' });
     }
 
     console.log('📝 Final parsed values:', { appUserId, store_url, key_id });
 
-    // 1) Upsert store in Baserow
-    console.log('💾 Upserting store to Baserow...');
-    const storeRow = await Baserow.upsertStore({
+    // 1) Update store credentials in Baserow
+    console.log('💾 Updating store credentials in Baserow...');
+    const storeRow = await Baserow.updateStoreCredentials(appUserId, {
       store_url,
-      app_user_id: appUserId,
       consumer_key,
       consumer_secret,
       woo_key_id: key_id,
+      permissions: 'read_write',
     });
 
     const store_id = storeRow.id;
-    console.log('✅ Store upserted in Baserow:', { 
+    console.log('✅ Store credentials updated:', { 
       store_id, 
       app_user_id: appUserId, 
       store_url 
     });
 
     // 2) Create webhook for order.created
-    // ✅ Use cleanUrl for the full URL with https://
     const configForWebhook = {
       url: WooService.cleanUrl(store_url),
       key: consumer_key,
@@ -243,11 +395,9 @@ app.post('/api/auth/woo/callback', async (req, res) => {
       console.log('✅ Webhook created:', { webhook_id: webhook.id, topic: webhook.topic });
     } catch (webhookErr) {
       console.error('⚠️ Failed to create webhook (non-fatal):', webhookErr.message);
-      // Don't fail the entire callback if webhook creation fails
-      // Store is already saved, user can manually create webhooks later
     }
 
-    // 3) Save webhook row in Baserow (only if webhook was created)
+    // 3) Save webhook row in Baserow
     if (webhook) {
       try {
         console.log('💾 Saving webhook to Baserow...');
@@ -266,7 +416,6 @@ app.post('/api/auth/woo/callback', async (req, res) => {
 
     console.log('🎉 WooCommerce SSO callback completed successfully');
 
-    // Woo just needs 2xx
     return res.json({ 
       ok: true, 
       store_id, 
