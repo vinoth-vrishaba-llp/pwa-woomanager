@@ -30,6 +30,21 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const App = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
 
+  // ✅ NEW: update banner state
+  const [updateReady, setUpdateReady] = useState(false);
+
+  // ✅ NEW: listen for SW update event
+  useEffect(() => {
+    const handler = () => {
+      console.log('[APP] New version available event received');
+      setUpdateReady(true);
+    };
+
+    window.addEventListener('woomanager-update-available', handler);
+    return () => window.removeEventListener('woomanager-update-available', handler);
+  }, []);
+
+
   // ✅ NEW: User authentication state
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState(null);
@@ -456,6 +471,29 @@ if (path.startsWith("/sso-complete")) {
       <div className="h-1 bg-purple-800 w-full" />
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
+      {/* ✅ New version banner */}
+      {updateReady && (
+        <div className="fixed bottom-16 inset-x-0 max-w-md mx-auto px-4 z-50">
+          <div className="bg-purple-700 text-white rounded-xl px-4 py-3 flex items-center justify-between shadow-lg">
+            <span className="text-xs font-medium">
+              New version of WooManager is available.
+            </span>
+            <button
+              className="ml-3 text-xs font-semibold bg-white text-purple-700 px-3 py-1 rounded-lg"
+              onClick={() => window.location.reload()}
+            >
+              Reload
+            </button>
+          </div>
+        </div>
+      )}
+
+      {activeTab !== "order-details" && activeTab !== "customer-details" && (
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
+          {/* ... your existing nav ... */}
+        </nav>
+      )}
+
       {activeTab !== "order-details" && activeTab !== "customer-details" && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
           <div className="flex justify-around items-center px-2 py-3">
@@ -541,7 +579,7 @@ if (path.startsWith("/sso-complete")) {
         </nav>
       )}
 
-      <style>{`
+     <style>{`
         .pb-safe-area {
           padding-bottom: env(safe-area-inset-bottom, 16px);
         }
