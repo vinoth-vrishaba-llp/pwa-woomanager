@@ -2,9 +2,20 @@
 const { MOCK_ORDERS, MOCK_PRODUCTS } = require('./mockData');
 
 const WooService = {
+  // Returns full URL with https:// for API calls
   cleanUrl: (url) => {
     let cleaned = url.replace(/\/$/, '').trim();
     if (!cleaned.startsWith('http')) cleaned = `https://${cleaned}`;
+    return cleaned;
+  },
+
+  // ✅ NEW: Extracts just the domain without protocol (for user_id encoding)
+  extractDomain: (url) => {
+    let cleaned = url.replace(/\/$/, '').trim();
+    // Remove protocol if present
+    cleaned = cleaned.replace(/^https?:\/\//i, '');
+    // Remove any path
+    cleaned = cleaned.split('/')[0];
     return cleaned;
   },
 
@@ -21,74 +32,67 @@ const WooService = {
   },
 
   // -------- ORDERS --------
-getOrders: async (config, useMock) => {
-  if (useMock) return MOCK_ORDERS;
+  getOrders: async (config, useMock) => {
+    if (useMock) return MOCK_ORDERS;
 
-  try {
-    const baseUrl = WooService.cleanUrl(config.url);
-    const perPage = 100;               // Woo max
-    let page = 1;
-    let allOrders = [];
-    let totalPages = null;
+    try {
+      const baseUrl = WooService.cleanUrl(config.url);
+      const perPage = 100;
+      let page = 1;
+      let allOrders = [];
+      let totalPages = null;
 
-    while (true) {
-      const endpoint = `orders?per_page=${perPage}&page=${page}`;
-      const finalUrl = WooService.buildUrl(baseUrl, endpoint, config);
+      while (true) {
+        const endpoint = `orders?per_page=${perPage}&page=${page}`;
+        const finalUrl = WooService.buildUrl(baseUrl, endpoint, config);
 
-      const response = await fetch(finalUrl);
-      if (!response.ok) {
-        throw new Error(`Order API error: ${response.status}`);
+        const response = await fetch(finalUrl);
+        if (!response.ok) {
+          throw new Error(`Order API error: ${response.status}`);
+        }
+
+        const batch = await response.json();
+        allOrders = allOrders.concat(batch);
+
+        if (totalPages == null) {
+          const headerVal = response.headers.get('X-WP-TotalPages');
+          totalPages = headerVal ? parseInt(headerVal, 10) : 0;
+        }
+
+        if (!totalPages || page >= totalPages || batch.length < perPage) {
+          break;
+        }
+
+        page += 1;
+        if (page > 50) break;
       }
 
-      const batch = await response.json();
-
-      // Append this page
-      allOrders = allOrders.concat(batch);
-
-      // Read total pages from header (Woo exposes this)
-      if (totalPages == null) {
-        const headerVal = response.headers.get('X-WP-TotalPages');
-        totalPages = headerVal ? parseInt(headerVal, 10) : 0;
-      }
-
-      if (!totalPages || page >= totalPages || batch.length < perPage) {
-        break;
-      }
-
-      page += 1;
-      if (page > 50) break;
+      return allOrders.map((order) => ({
+        id: order.id,
+        customer_id: order.customer_id ?? null,
+        customer: order.billing
+          ? `${order.billing.first_name} ${order.billing.last_name}`.trim() || 'Guest'
+          : 'Guest',
+        billing_email: order.billing?.email || null,
+        total: parseFloat(order.total),
+        status: order.status,
+        date: new Date(order.date_created).toISOString(),
+        items: order.line_items?.length || 0,
+        line_items: order.line_items,
+        billing: order.billing,
+        shipping: order.shipping,
+        payment_method: order.payment_method,
+        payment_method_title: order.payment_method_title,
+        transaction_id: order.transaction_id || null,
+        currency_symbol: order.currency_symbol,
+        shipping_total: parseFloat(order.shipping_total || '0') || 0,
+        discount_total: parseFloat(order.discount_total || '0') || 0,
+      }));
+    } catch (err) {
+      console.error('Fetch Orders Error:', err);
+      throw err;
     }
-
-    // Map merged orders
-    return allOrders.map((order) => ({
-      id: order.id,
-      customer_id: order.customer_id ?? null,
-      customer: order.billing
-        ? `${order.billing.first_name} ${order.billing.last_name}`.trim() || 'Guest'
-        : 'Guest',
-      billing_email: order.billing?.email || null,
-      total: parseFloat(order.total),
-      status: order.status,
-      date: new Date(order.date_created).toISOString(),
-      items: order.line_items?.length || 0,
-      line_items: order.line_items,
-      billing: order.billing,
-      shipping: order.shipping,
-
-      // 🔹 important bits for Razorpay UI
-      payment_method: order.payment_method,              // e.g. "razorpay"
-      payment_method_title: order.payment_method_title,  // "Credit Card/Debit Card/NetBanking"
-      transaction_id: order.transaction_id || null,      // e.g. "pay_RkeOYgW1wid0m1"
-
-      currency_symbol: order.currency_symbol,
-      shipping_total: parseFloat(order.shipping_total || '0') || 0,
-      discount_total: parseFloat(order.discount_total || '0') || 0,
-    }));
-  } catch (err) {
-    console.error('Fetch Orders Error:', err);
-    throw err;
-  }
-},
+  },
 
   // ------------------ PRODUCTS ------------------
   getProducts: async (config, useMock) => {
@@ -108,9 +112,9 @@ getOrders: async (config, useMock) => {
         name: p.name,
         price: parseFloat(p.price) || 0,
         stock: p.stock_quantity || 0,
-        status: p.stock_status || 'instock', // stock status
-        post_status: p.status,               // publish/draft/pending
-        categories: p.categories || [],      // [{id,name,slug}]
+        status: p.stock_status || 'instock',
+        post_status: p.status,
+        categories: p.categories || [],
         sku: p.sku || null,
         image: p.images?.[0]?.src || null,
       }));
@@ -149,7 +153,7 @@ getOrders: async (config, useMock) => {
     }
   },
 
-  // ------------------ CUSTOMERS (base data only) ------------------
+  // ------------------ CUSTOMERS ------------------
   getCustomers: async (config, useMock) => {
     if (useMock) return [];
 
@@ -200,7 +204,7 @@ getOrders: async (config, useMock) => {
       throw new Error(`Sales report API error: ${response.status}`);
     }
 
-    const data = await response.json(); // array with one element
+    const data = await response.json();
     const raw = Array.isArray(data) && data.length > 0 ? data[0] : null;
     if (!raw) return null;
 
@@ -219,15 +223,15 @@ getOrders: async (config, useMock) => {
     };
   },
 
-   // ------------------ CREATE WEBHOOK ------------------
+  // ------------------ CREATE WEBHOOK ------------------
   createWebhook: async (config, { name, topic, delivery_url }) => {
     const baseUrl = WooService.cleanUrl(config.url);
     const finalUrl = WooService.buildUrl(baseUrl, 'webhooks', config);
 
     const body = {
       name,
-      topic,         // e.g. "order.created"
-      delivery_url,  // your backend webhook receiver
+      topic,
+      delivery_url,
       status: 'active',
     };
 
@@ -242,7 +246,7 @@ getOrders: async (config, useMock) => {
       throw new Error(`Create webhook error ${response.status}: ${text}`);
     }
 
-    return response.json(); // full webhook object with id, status, etc.
+    return response.json();
   },
 };
 
