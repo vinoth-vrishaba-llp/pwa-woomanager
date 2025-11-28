@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: Open Sans, system-ui, Avenir, Helvetica, Arial, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
@@ -11,3 +11,13 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+body {
+  position: fixed;
+  overflow: hidden;
+  overscroll-behavior-y: none;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+}
