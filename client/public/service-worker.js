@@ -1,61 +1,50 @@
 // client/public/service-worker.js
+/* global self, clients */
 
-const CACHE_NAME = 'woomanager-shell-v2';
+const SHELL_CACHE = 'woomanager-shell-v1';
 const API_CACHE = 'woomanager-api-v1';
 
 const APP_SHELL = [
   '/',
   '/index.html',
-  // For production builds, Vite will generate hashed assets;
-  // you'd normally cache those instead of /src/* files.
+  '/manifest.webmanifest',
 ];
 
+// ---- INSTALL ----
 self.addEventListener('install', (event) => {
+  console.log('[SW] install');
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(SHELL_CACHE).then((cache) => cache.addAll(APP_SHELL))
   );
   self.skipWaiting();
 });
 
+// ---- ACTIVATE ----
 self.addEventListener('activate', (event) => {
+  console.log('[SW] activate');
   event.waitUntil(
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((k) => ![CACHE_NAME, API_CACHE].includes(k))
+          .filter((k) => ![SHELL_CACHE, API_CACHE].includes(k))
           .map((k) => caches.delete(k))
       )
     )
   );
-  self.clients.claim();
+  clients.claim();
 });
 
+// ---- FETCH ----
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
 
-  // ❗ Do NOT try to cache non-GET requests (POST, PUT, DELETE, etc.)
+  // Only touch GET requests
   if (request.method !== 'GET') {
-    // For API POSTs, just go to network; no cache.
-    if (url.pathname.startsWith('/api/')) {
-      event.respondWith(
-        fetch(request).catch(() =>
-          new Response(
-            JSON.stringify({ error: 'Offline', message: 'Request failed while offline.' }),
-            {
-              status: 503,
-              headers: { 'Content-Type': 'application/json' },
-            }
-          )
-        )
-      );
-      return;
-    }
-    // For other non-GETs, let the browser handle it.
     return;
   }
 
-  // ---- API GET requests: network-first, cache fallback ----
+  // API: network-first, cache fallback
   if (url.pathname.startsWith('/api/')) {
     event.respondWith(
       fetch(request)
@@ -64,27 +53,23 @@ self.addEventListener('fetch', (event) => {
           caches.open(API_CACHE).then((cache) => cache.put(request, clone));
           return res;
         })
-        .catch(() =>
-          caches.match(request).then((cached) => cached || Promise.reject('no-match'))
-        )
+        .catch(() => caches.match(request))
     );
     return;
   }
 
-  // ---- App shell navigations: cache-first ----
-  if (request.mode === "navigate") {
-  event.respondWith(
-    caches.match("/index.html").then((cached) => {
-      if (cached) return cached;
-      // Always hit index.html, never /sso-complete, /whatever
-      return fetch("/index.html");
-    })
-  );
-  return;
-}
+  // Navigations: always serve app shell
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      caches.match('/index.html').then((cached) => {
+        if (cached) return cached;
+        return fetch('/index.html');
+      })
+    );
+    return;
+  }
 
-
-  // ---- Static assets: cache-first fallback ----
+  // Static assets: cache-first
   event.respondWith(
     caches.match(request).then((cached) => cached || fetch(request))
   );
