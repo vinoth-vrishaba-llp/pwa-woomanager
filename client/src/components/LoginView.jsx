@@ -37,8 +37,9 @@ const LoginView = ({ onLogin, onDemo }) => {
       setSsoLoading(true);
 
       const cleanedUrl = url.trim();
-      // Simple single-user ID; also embed URL so backend can decode it
-      const appUserId = `pwa-user-1|${cleanedUrl}`;
+      // ✅ FIXED: Simple single-user ID WITHOUT embedding URL
+      // Backend will create the pipe-delimited format
+      const appUserId = 'pwa-user-1';
 
       const res = await fetch(`${API_BASE_URL}/api/auth/woo/start`, {
         method: 'POST',

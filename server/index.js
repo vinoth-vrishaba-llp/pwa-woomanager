@@ -109,15 +109,26 @@ app.post('/api/auth/woo/start', (req, res) => {
     const base = WooService.cleanUrl(store_url);
     const endpoint = '/wc-auth/v1/authorize';
 
+    // ✅ FIXED: Create pipe-delimited user_id on backend
+    // Format: "app_user_id|cleaned_store_url"
+    const encodedUserId = `${app_user_id}|${base}`;
+
     const params = new URLSearchParams({
       app_name: WOO_APP_NAME,
       scope: 'read_write',
-      user_id: app_user_id, // you decide the scheme: e.g. "pwa-user-1|mystore.com"
+      user_id: encodedUserId,  // ← Now properly formatted: "pwa-user-1|shop.bharatkewow.com"
       return_url: `${FRONTEND_ORIGIN}/sso-complete`,
       callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
     });
 
     const authUrl = `${base}${endpoint}?${params.toString()}`;
+    
+    console.log('Starting WooCommerce SSO:', {
+      store_url: base,
+      app_user_id,
+      encoded_user_id: encodedUserId,
+    });
+
     return res.json({ authUrl });
   } catch (err) {
     console.error('Auth start error:', err);
@@ -130,16 +141,64 @@ app.post('/api/auth/woo/callback', async (req, res) => {
   try {
     const { key_id, user_id, consumer_key, consumer_secret } = req.body || {};
 
+    console.log('Woo callback received:', { 
+      key_id, 
+      user_id, 
+      has_consumer_key: !!consumer_key, 
+      has_consumer_secret: !!consumer_secret 
+    });
+
     if (!key_id || !user_id || !consumer_key || !consumer_secret) {
       console.error('Invalid Woo callback payload:', req.body);
       return res.status(400).json({ error: 'Invalid payload from Woo' });
     }
 
-    // You encoded app_user_id as "pwa-user-1|storeUrl"
-    const [appUserId, storeUrlRaw] = String(user_id).split('|');
-    const store_url = WooService.cleanUrl(storeUrlRaw || '');
+    // ✅ Parse user_id with comprehensive error handling
+    let appUserId, store_url;
+
+    if (String(user_id).includes('|')) {
+      // Expected format: "pwa-user-1|shop.bharatkewow.com"
+      const parts = String(user_id).split('|');
+      appUserId = parts[0];
+      const storeUrlRaw = parts[1];
+      store_url = WooService.cleanUrl(storeUrlRaw || '');
+      
+      console.log('✅ Parsed user_id correctly:', { appUserId, store_url });
+    } else {
+      // Fallback: if no pipe delimiter found (should not happen with fix)
+      console.warn('⚠️ user_id missing pipe delimiter:', user_id);
+      
+      // Try to extract store URL from user_id if it looks like a domain
+      const domainMatch = String(user_id).match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)$/);
+      
+      if (domainMatch) {
+        const extractedDomain = domainMatch[1];
+        appUserId = String(user_id).replace(extractedDomain, '').replace(/[^a-zA-Z0-9-_]/g, '');
+        store_url = WooService.cleanUrl(extractedDomain);
+        console.log('⚠️ Extracted from malformed user_id:', { appUserId, store_url });
+      } else {
+        // Cannot parse - treat entire string as app_user_id
+        appUserId = String(user_id).trim();
+        store_url = '';
+        console.error('❌ Could not extract store URL from user_id:', user_id);
+      }
+    }
+
+    // Validate parsed values
+    if (!appUserId) {
+      console.error('❌ app_user_id is empty after parsing user_id:', user_id);
+      return res.status(400).json({ error: 'Invalid user_id format: could not extract app_user_id' });
+    }
+
+    if (!store_url) {
+      console.error('❌ store_url is empty after parsing user_id:', user_id);
+      return res.status(400).json({ error: 'Invalid user_id format: could not extract store_url' });
+    }
+
+    console.log('📝 Final parsed values:', { appUserId, store_url, key_id });
 
     // 1) Upsert store in Baserow
+    console.log('💾 Upserting store to Baserow...');
     const storeRow = await Baserow.upsertStore({
       store_url,
       app_user_id: appUserId,
@@ -149,6 +208,11 @@ app.post('/api/auth/woo/callback', async (req, res) => {
     });
 
     const store_id = storeRow.id;
+    console.log('✅ Store upserted in Baserow:', { 
+      store_id, 
+      app_user_id: appUserId, 
+      store_url 
+    });
 
     // 2) Create webhook for order.created
     const configForWebhook = {
@@ -160,25 +224,49 @@ app.post('/api/auth/woo/callback', async (req, res) => {
 
     const delivery_url = `${API_BASE_URL}/api/webhooks/woocommerce/${store_id}`;
 
-    const webhook = await WooService.createWebhook(configForWebhook, {
-      name: 'WooManager – Order created',
-      topic: 'order.created',
-      delivery_url,
-    });
+    let webhook;
+    try {
+      console.log('🔔 Creating WooCommerce webhook...');
+      webhook = await WooService.createWebhook(configForWebhook, {
+        name: 'WooManager – Order created',
+        topic: 'order.created',
+        delivery_url,
+      });
+      console.log('✅ Webhook created:', { webhook_id: webhook.id, topic: webhook.topic });
+    } catch (webhookErr) {
+      console.error('⚠️ Failed to create webhook (non-fatal):', webhookErr.message);
+      // Don't fail the entire callback if webhook creation fails
+      // Store is already saved, user can manually create webhooks later
+    }
 
-    // 3) Save webhook row in Baserow
-    await Baserow.createWebhookRow({
-      store_id,
-      webhook_id: webhook.id,
-      topic: webhook.topic,
-      delivery_url: webhook.delivery_url,
-      status: webhook.status,
-    });
+    // 3) Save webhook row in Baserow (only if webhook was created)
+    if (webhook) {
+      try {
+        console.log('💾 Saving webhook to Baserow...');
+        await Baserow.createWebhookRow({
+          store_id,
+          webhook_id: webhook.id,
+          topic: webhook.topic,
+          delivery_url: webhook.delivery_url,
+          status: webhook.status,
+        });
+        console.log('✅ Webhook saved to Baserow');
+      } catch (webhookRowErr) {
+        console.error('⚠️ Failed to save webhook to Baserow (non-fatal):', webhookRowErr.message);
+      }
+    }
+
+    console.log('🎉 WooCommerce SSO callback completed successfully');
 
     // Woo just needs 2xx
-    return res.json({ ok: true });
+    return res.json({ 
+      ok: true, 
+      store_id, 
+      app_user_id: appUserId,
+      store_url 
+    });
   } catch (err) {
-    console.error('Woo callback error:', err);
+    console.error('❌ Woo callback error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

@@ -1,4 +1,4 @@
-// client/src/components/SsoComplete.jsx
+// client/src/components/SsoComplete.jsx (Enhanced with better error handling)
 import React, { useEffect, useState } from 'react';
 import { CheckCircle2, XCircle, ExternalLink, Loader2 } from 'lucide-react';
 
@@ -15,29 +15,42 @@ const SsoComplete = () => {
     const params = new URLSearchParams(window.location.search);
     const s = params.get('success');
     const u = params.get('user_id');
+    
+    console.log('SSO Complete page loaded:', { success: s, user_id: u });
+    
     setSuccess(s === '1');
     setAppUserId(u || null);
   }, []);
 
   useEffect(() => {
     if (!success || !appUserId) return;
+    
     (async () => {
       try {
         setLoadingStore(true);
         setStoreError(null);
 
+        // ✅ Extract just the app_user_id part (before pipe if present)
+        const cleanAppUserId = appUserId.includes('|') 
+          ? appUserId.split('|')[0] 
+          : appUserId;
+
+        console.log('Fetching store for app_user_id:', cleanAppUserId);
+
         const res = await fetch(`${API_BASE_URL}/api/store/by-app-user`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ app_user_id: appUserId }),
+          body: JSON.stringify({ app_user_id: cleanAppUserId }),
         });
 
         if (!res.ok) {
           const text = await res.text();
+          console.error('Store lookup failed:', text);
           throw new Error(text || `Failed with status ${res.status}`);
         }
 
         const json = await res.json();
+        console.log('Store info received:', json);
         setStoreInfo(json);
 
         // Save SSO session – NO keys
@@ -48,6 +61,7 @@ const SsoComplete = () => {
           app_user_id: json.app_user_id,
         };
         localStorage.setItem('woo_manager_store', JSON.stringify(session));
+        console.log('Session saved to localStorage');
       } catch (err) {
         console.error('Fetch store by app_user error:', err);
         setStoreError(err.message || 'Failed to load store info.');
@@ -89,18 +103,25 @@ const SsoComplete = () => {
             )}
 
             {storeError && (
-              <p className="text-xs text-red-500 bg-red-50 border border-red-100 rounded-lg px-3 py-2 mb-3">
-                {storeError}
-              </p>
+              <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-3 mb-3 text-left">
+                <p className="font-semibold mb-1">Connection Error</p>
+                <p className="text-[11px] leading-relaxed">{storeError}</p>
+                <p className="text-[10px] text-gray-500 mt-2">
+                  Try reconnecting from the login screen, or contact support if this persists.
+                </p>
+              </div>
             )}
 
             {storeInfo && !loadingStore && (
-              <p className="text-xs text-gray-500 mb-3">
-                Connected store:{' '}
-                <span className="font-mono text-[11px]">
-                  {storeInfo.store_url} (ID: {storeInfo.store_id})
-                </span>
-              </p>
+              <div className="bg-green-50 border border-green-200 rounded-lg px-3 py-2 mb-3">
+                <p className="text-xs text-green-800 font-medium mb-1">✓ Store Connected</p>
+                <p className="text-[11px] text-gray-600">
+                  <span className="font-mono">{storeInfo.store_url}</span>
+                </p>
+                <p className="text-[10px] text-gray-500 mt-1">
+                  Store ID: {storeInfo.store_id}
+                </p>
+              </div>
             )}
 
             <button
