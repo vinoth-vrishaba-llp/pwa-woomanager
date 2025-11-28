@@ -58,7 +58,7 @@ const AuthView = ({ onAuthSuccess }) => {
       localStorage.setItem('woo_manager_token', data.token);
       localStorage.setItem('woo_manager_user', JSON.stringify(data.user));
 
-      console.log('✅ Authentication successful:', data.user);
+    //console.log('✅ Authentication successful:', data.user);
 
       // Call parent callback
       onAuthSuccess(data.user, data.token);
