@@ -467,7 +467,7 @@ if (path.startsWith("/sso-complete")) {
 
   // -------- Layout --------
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto relative shadow-2xl overflow-x-hidden">
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto relative shadow-2xl overflow-hidden">
       <div className="h-1 bg-purple-800 w-full" />
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
