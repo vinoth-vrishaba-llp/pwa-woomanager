@@ -34,7 +34,6 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
     const rpStatus = (rpPayment.status || "").toLowerCase();
     const rpMethod = (rpPayment.method || "").toUpperCase();
 
-    // Status label purely from Razorpay
     if (rpStatus === "captured") paymentStatusLabel = "Captured";
     else if (rpStatus === "authorized") paymentStatusLabel = "Authorized";
     else if (rpStatus === "created") paymentStatusLabel = "Created";
@@ -42,10 +41,8 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
     else if (rpStatus === "failed") paymentStatusLabel = "Failed";
     else paymentStatusLabel = rpStatus || "Unknown";
 
-    // Method purely from Razorpay
     paymentMethodLabel = rpMethod || "Not specified";
 
-    // Colors based on Razorpay status
     if (paymentStatusLabel === "Captured" || paymentStatusLabel === "Authorized") {
       paymentStatusColor = "text-green-600";
     } else if (paymentStatusLabel === "Created") {
@@ -56,8 +53,8 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
   }
 
   return (
-    <div className="pb-24 pt-0 px-0 animate-fade-in min-h-screen bg-gray-50 z-20 absolute inset-0">
-      {/* Header (still based on Woo order status) */}
+    <div className="animate-fade-in min-h-screen bg-gray-50 flex flex-col pb-0">
+      {/* Header (sticky) */}
       <div className="bg-white sticky top-0 z-10 border-b border-gray-200 px-4 py-4 flex items-center gap-3 shadow-sm">
         <button
           onClick={onBack}
@@ -74,7 +71,8 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
         <StatusBadge status={order.status} />
       </div>
 
-      <div className="p-4 space-y-4">
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pb-24">
         {/* Total card (Woo) */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
           <div className="flex justify-between items-center mb-2">
@@ -88,12 +86,14 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
               <CreditCard size={14} /> Payment
             </span>
             <span className="font-medium text-gray-700">
-              {order.payment_method_title || order.payment_method || "Not specified"}
+              {order.payment_method_title ||
+                order.payment_method ||
+                "Not specified"}
             </span>
           </div>
         </div>
 
-        {/* 🔹 Payment Status card – ONLY Razorpay response (status + method) */}
+        {/* Payment Status (Razorpay only) */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
             Payment Status (Razorpay)
@@ -121,7 +121,7 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
           )}
         </div>
 
-        {/* Charges card (Woo) */}
+        {/* Charges card */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">
             Charges
@@ -144,7 +144,7 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
           </div>
         </div>
 
-        {/* Items card (Woo) */}
+        {/* Items card */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 font-bold text-xs text-gray-500 uppercase tracking-wider">
             Items ({order.line_items?.length || 0})
@@ -174,7 +174,7 @@ const OrderDetails = ({ order, onBack, razorpayPayment }) => {
           </div>
         </div>
 
-        {/* Customer card (Woo) */}
+        {/* Customer card */}
         {order.billing && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 space-y-3">
             <h3 className="font-bold text-sm text-gray-800 border-b border-gray-100 pb-2 mb-2">
