@@ -1,6 +1,6 @@
 // client/public/service-worker.js
 
-const CACHE_NAME = 'woomanager-shell-v1';
+const CACHE_NAME = 'woomanager-shell-v2';
 const API_CACHE = 'woomanager-api-v1';
 
 const APP_SHELL = [
@@ -72,12 +72,17 @@ self.addEventListener('fetch', (event) => {
   }
 
   // ---- App shell navigations: cache-first ----
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      caches.match('/index.html').then((cached) => cached || fetch(request))
-    );
-    return;
-  }
+  if (request.mode === "navigate") {
+  event.respondWith(
+    caches.match("/index.html").then((cached) => {
+      if (cached) return cached;
+      // Always hit index.html, never /sso-complete, /whatever
+      return fetch("/index.html");
+    })
+  );
+  return;
+}
+
 
   // ---- Static assets: cache-first fallback ----
   event.respondWith(

@@ -60,9 +60,18 @@ const App = () => {
 
   // ---- route: /sso-complete handled separately ----
   const path = window.location.pathname;
-  if (path.startsWith("/sso-complete")) {
-    return <SsoComplete />;
-  }
+const hash = window.location.hash || "";
+
+// Hash-based SSO route (production)
+if (hash.startsWith("#/sso-complete")) {
+  return <SsoComplete />;
+}
+
+// Direct path (useful in local dev)
+if (path.startsWith("/sso-complete")) {
+  return <SsoComplete />;
+}
+
 
   // ✅ NEW: Check authentication on mount
   useEffect(() => {

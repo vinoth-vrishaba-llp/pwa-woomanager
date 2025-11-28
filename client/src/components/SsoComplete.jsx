@@ -4,6 +4,23 @@ import { CheckCircle2, XCircle, ExternalLink, Loader2 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
+
+
+const getSsoParams = () => {
+  // 1) Normal case: query in search
+  if (window.location.search && window.location.search.length > 1) {
+    return new URLSearchParams(window.location.search);
+  }
+
+  // 2) Hash case: #/sso-complete?success=1&user_id=...
+  const hash = window.location.hash || "";
+  const qIndex = hash.indexOf("?");
+  if (qIndex === -1) return new URLSearchParams();
+  const queryString = hash.substring(qIndex + 1);
+  return new URLSearchParams(queryString);
+};
+
+
 const SsoComplete = () => {
   const [success, setSuccess] = useState(null);
   const [appUserId, setAppUserId] = useState(null);
@@ -12,15 +29,15 @@ const SsoComplete = () => {
   const [storeInfo, setStoreInfo] = useState(null);
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const s = params.get('success');
-    const u = params.get('user_id');
-    
-    console.log('SSO Complete page loaded:', { success: s, user_id: u });
-    
-    setSuccess(s === '1');
-    setAppUserId(u || null);
-  }, []);
+  const params = getSsoParams();
+  const s = params.get("success");
+  const u = params.get("user_id");
+
+  console.log("SSO Complete page loaded:", { success: s, user_id: u });
+
+  setSuccess(s === "1");
+  setAppUserId(u || null);
+}, []);
 
   useEffect(() => {
     if (!success || !appUserId) return;

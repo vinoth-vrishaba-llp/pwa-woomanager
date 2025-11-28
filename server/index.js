@@ -279,12 +279,14 @@ app.post('/api/auth/woo/start', async (req, res) => {
     const encodedUserId = `${app_user_id}__${domain}`;
 
     const params = new URLSearchParams({
-      app_name: WOO_APP_NAME,
-      scope: 'read_write',
-      user_id: encodedUserId,
-      return_url: `${FRONTEND_ORIGIN}/sso-complete`,
-      callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
-    });
+  app_name: WOO_APP_NAME,
+  scope: 'read_write',
+  user_id: encodedUserId,
+  // Use hash route so origin only sees "/"
+  return_url: `${FRONTEND_ORIGIN}/#/sso-complete`,
+  callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
+});
+
 
     const authUrl = `${base}${endpoint}?${params.toString()}`;
     
