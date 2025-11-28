@@ -30,9 +30,9 @@ const SsoComplete = () => {
         setLoadingStore(true);
         setStoreError(null);
 
-        // ✅ Extract just the app_user_id part (before pipe if present)
-        const cleanAppUserId = appUserId.includes('|') 
-          ? appUserId.split('|')[0] 
+        // ✅ Extract just the app_user_id part (before double underscore if present)
+        const cleanAppUserId = appUserId.includes('__') 
+          ? appUserId.split('__')[0] 
           : appUserId;
 
         console.log('Fetching store for app_user_id:', cleanAppUserId);
