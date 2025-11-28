@@ -112,9 +112,9 @@ app.post('/api/auth/woo/start', (req, res) => {
     const base = WooService.cleanUrl(store_url);
     const endpoint = '/wc-auth/v1/authorize';
 
-    // ✅ Create pipe-delimited user_id with DOMAIN ONLY
-    // Format: "app_user_id|domain" (e.g., "pwa-user-1|shop.bharatkewow.com")
-    const encodedUserId = `${app_user_id}|${domain}`;
+    // ✅ Create user_id with DOUBLE UNDERSCORE delimiter (pipe gets stripped by WooCommerce)
+    // Format: "app_user_id__domain" (e.g., "pwa-user-1__shop.bharatkewow.com")
+    const encodedUserId = `${app_user_id}__${domain}`;
 
     const params = new URLSearchParams({
       app_name: WOO_APP_NAME,
