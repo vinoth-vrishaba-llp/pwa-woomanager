@@ -1,10 +1,10 @@
 // server/baserowClient.js
 require('dotenv').config();
+const bcrypt = require('bcryptjs'); // npm install bcryptjs
 
 const BASEROW_API_URL = process.env.BASEROW_API_URL;
 const BASEROW_TOKEN = process.env.BASEROW_TOKEN;
 
-// Table IDs – you can also put these in env if you want
 const STORE_TABLE_ID = process.env.BASEROW_STORE_TABLE_ID || 748;
 const WEBHOOK_TABLE_ID = process.env.BASEROW_WEBHOOK_TABLE_ID || 749;
 const NOTIF_TABLE_ID = process.env.BASEROW_NOTIFICATION_TABLE_ID || 750;
@@ -32,6 +32,100 @@ async function baserowFetch(path, options = {}) {
   return res.json();
 }
 
+// ---------- USER AUTHENTICATION ----------
+
+/**
+ * Create a new user account
+ * @param {string} username 
+ * @param {string} password - Plain text password (will be hashed)
+ * @param {string} store_url - Optional: store URL if provided during signup
+ */
+async function createUser(username, password, store_url = null) {
+  // Check if username already exists
+  const existing = await findUserByUsername(username);
+  if (existing) {
+    throw new Error('Username already exists');
+  }
+
+  // Generate app_user_id from username + random string
+  const randomStr = Math.random().toString(36).substring(2, 8);
+  const app_user_id = `${username.toLowerCase().replace(/[^a-z0-9]/g, '')}-${randomStr}`;
+
+  // Hash password
+  const hashedPassword = await bcrypt.hash(password, 10);
+
+  const payload = {
+    username,
+    password: hashedPassword,
+    app_user_id,
+    store_url: store_url || '',
+    consumer_key: '',
+    consumer_secret: '',
+    woo_key_id: '',
+    permissions: '',
+  };
+
+  const data = await baserowFetch(
+    `/database/rows/table/${STORE_TABLE_ID}/?user_field_names=true`,
+    { method: 'POST', body: JSON.stringify(payload) }
+  );
+
+  return {
+    id: data.id,
+    username: data.username,
+    app_user_id: data.app_user_id,
+    store_url: data.store_url,
+    has_store_connected: !!(data.consumer_key && data.consumer_secret),
+  };
+}
+
+/**
+ * Find user by username
+ */
+async function findUserByUsername(username) {
+  if (!username) return null;
+
+  const qs = new URLSearchParams({
+    user_field_names: 'true',
+    [`filter__username__equal`]: username,
+  });
+
+  const data = await baserowFetch(
+    `/database/rows/table/${STORE_TABLE_ID}/?${qs.toString()}`
+  );
+
+  if (!data || !Array.isArray(data.results) || data.results.length === 0) {
+    return null;
+  }
+  return data.results[0];
+}
+
+/**
+ * Authenticate user with username and password
+ */
+async function authenticateUser(username, password) {
+  const user = await findUserByUsername(username);
+  
+  if (!user) {
+    throw new Error('Invalid username or password');
+  }
+
+  // Compare password
+  const isValid = await bcrypt.compare(password, user.password);
+  
+  if (!isValid) {
+    throw new Error('Invalid username or password');
+  }
+
+  return {
+    id: user.id,
+    username: user.username,
+    app_user_id: user.app_user_id,
+    store_url: user.store_url,
+    has_store_connected: !!(user.consumer_key && user.consumer_secret),
+  };
+}
+
 // ---------- STORES ----------
 
 async function findStoreByAppUserId(app_user_id) {
@@ -39,7 +133,6 @@ async function findStoreByAppUserId(app_user_id) {
 
   const qs = new URLSearchParams({
     user_field_names: 'true',
-    // assumes your Stores table has a text field called "app_user_id"
     [`filter__app_user_id__equal`]: app_user_id,
   });
 
@@ -62,18 +155,6 @@ async function getStoreById(storeId) {
   return data;
 }
 
-async function createStoreRow(payload) {
-  // payload fields must match your Baserow column names:
-  // e.g. { store_url, app_user_id, consumer_key, consumer_secret, woo_key_id }
-  const body = JSON.stringify(payload);
-
-  const data = await baserowFetch(
-    `/database/rows/table/${STORE_TABLE_ID}/?user_field_names=true`,
-    { method: 'POST', body }
-  );
-  return data;
-}
-
 async function updateStoreRow(rowId, payload) {
   const body = JSON.stringify(payload);
 
@@ -84,33 +165,34 @@ async function updateStoreRow(rowId, payload) {
   return data;
 }
 
-// Upsert by app_user_id + store_url
-async function upsertStore({ store_url, app_user_id, consumer_key, consumer_secret, woo_key_id }) {
+/**
+ * Update store with WooCommerce credentials after SSO
+ */
+async function updateStoreCredentials(app_user_id, { store_url, consumer_key, consumer_secret, woo_key_id, permissions }) {
   const existing = await findStoreByAppUserId(app_user_id);
+
+  if (!existing) {
+    throw new Error('User not found');
+  }
 
   const payload = {
     store_url,
-    app_user_id,
     consumer_key,
     consumer_secret,
     woo_key_id,
+    permissions: permissions || 'read_write',
   };
 
-  if (existing) {
-    const updated = await updateStoreRow(existing.id, payload);
-    return updated;
-  } else {
-    const created = await createStoreRow(payload);
-    return created;
-  }
+  const updated = await updateStoreRow(existing.id, payload);
+  return updated;
 }
 
 // ---------- WEBHOOKS ----------
 
 async function createWebhookRow({ store_id, webhook_id, topic, delivery_url, status }) {
   const payload = {
-    store_id,     // numeric (link field or integer)
-    webhook_id,   // WC webhook ID
+    store_id,
+    webhook_id,
     topic,
     delivery_url,
     status,
@@ -133,7 +215,6 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
     topic,
     resource,
     event,
-    // assumes a long text / JSON field named "payload"
     payload: JSON.stringify(payload || {}),
   };
 
@@ -147,9 +228,18 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
 }
 
 module.exports = {
-  upsertStore,
-  createWebhookRow,
-  createNotificationRow,
+  // User auth
+  createUser,
+  authenticateUser,
+  findUserByUsername,
+  
+  // Store management
+  updateStoreCredentials,
   findStoreByAppUserId,
   getStoreById,
+  updateStoreRow,
+  
+  // Webhooks & notifications
+  createWebhookRow,
+  createNotificationRow,
 };

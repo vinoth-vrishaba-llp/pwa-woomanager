@@ -72,6 +72,8 @@ const SsoComplete = () => {
   }, [success, appUserId]);
 
   const goHome = () => {
+    // After successful store connection, go back to app
+    // App.jsx will detect user has store connected and show Dashboard
     window.location.href = '/';
   };
 
