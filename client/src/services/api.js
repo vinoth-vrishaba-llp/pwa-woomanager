@@ -37,15 +37,18 @@ export async function fetchProducts(config) {
  * 🔹 Fetch Razorpay payment details (status + method etc.)
  * Body: { transaction_id }
  */
-export async function fetchRazorpayPayment(transaction_id) {
+export async function fetchRazorpayPayment(transaction_id, store_id) {
   const res = await fetch(`${API_BASE}/api/razorpay/payment`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ transaction_id }),
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ transaction_id, store_id }),
   });
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to fetch Razorpay payment');
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || "Failed to fetch Razorpay payment");
+  }
 
-  return data.payment; // raw Razorpay /v1/payments/:id object
+  const json = await res.json();
+  return json.payment;
 }

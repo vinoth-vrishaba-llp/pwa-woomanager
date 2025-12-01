@@ -21,6 +21,8 @@ import CustomersList from "./components/CustomersList";
 import CustomerDetails from "./components/CustomerDetails";
 import Notifications from "./components/Notifications";
 import SsoComplete from "./components/SsoComplete";
+import RazorpayConnectView from "./components/RazorpayConnectView";
+
 
 // 🔹 import API helper
 import { fetchRazorpayPayment } from "./services/api";
@@ -169,26 +171,54 @@ if (path.startsWith("/sso-complete")) {
   }, []);
 
   // ✅ NEW: Auth success handler
-  const handleAuthSuccess = (userData, authToken) => {
-    setUser(userData);
-    setToken(authToken);
+const handleAuthSuccess = (userData, authToken) => {
+  setUser(userData);
+  setToken(authToken);
 
-    // If user already has store connected, set up session
-    if (userData.has_store_connected) {
-      setSession({
-        type: "sso",
-        store_id: userData.id,
-        store_url: userData.store_url,
-        app_user_id: userData.app_user_id,
-      });
-    }
-  };
+  // If user already has store connected, set up session
+  if (userData.has_store_connected) {
+    setSession({
+      type: "sso",
+      store_id: userData.id,
+      store_url: userData.store_url,
+      app_user_id: userData.app_user_id,
+    });
+  }
+};
+
 
   // ✅ NEW: Store connected handler
   const handleStoreConnected = () => {
     // Refresh user data
     window.location.reload();
   };
+
+  // ✅ NEW: Razorpay connected handler
+const handleRazorpayConnected = ({ store_id }) => {
+  // Update user flag so we skip Razorpay screen next time
+  setUser((prev) =>
+    prev
+      ? {
+          ...prev,
+          has_razorpay_connected: true,
+        }
+      : prev
+  );
+
+  // Ensure session is set (should already be set if Woo is connected)
+  if (!session && user?.has_store_connected) {
+    setSession({
+      type: "sso",
+      store_id: store_id || user.id,
+      store_url: user.store_url,
+      app_user_id: user.app_user_id,
+    });
+  }
+
+  // Go to dashboard
+  setActiveTab("dashboard");
+};
+
 
   // -------- Demo mode (kept for testing) --------
   const handleDemo = () => {
@@ -339,26 +369,36 @@ useEffect(() => {
 
   // -------- Selection handlers --------
   const handleSelectOrder = async (order) => {
-    setSelectedOrder(order);
-    setActiveTab("order-details");
-    setRazorpayPayment(null);
-    setRazorpayError(null);
+  setSelectedOrder(order);
+  setActiveTab("order-details");
+  setRazorpayPayment(null);
+  setRazorpayError(null);
 
-    const txId = order.transaction_id;
-    const methodSlug = (order.payment_method || "").toLowerCase();
+  const txId = order.transaction_id;
+  const methodSlug = (order.payment_method || "").toLowerCase();
 
-    if (!txId || methodSlug !== "razorpay") {
-      return;
-    }
+  if (!txId || methodSlug !== "razorpay") {
+    return;
+  }
 
-    try {
-      const payment = await fetchRazorpayPayment(txId);
-      setRazorpayPayment(payment);
-    } catch (err) {
-      console.error("Failed to load Razorpay payment:", err);
-      setRazorpayError(err.message || "Failed to load Razorpay payment");
-    }
-  };
+  // We only support Razorpay lookup for SSO stores
+  const storeId =
+    session?.type === "sso" && session.store_id ? session.store_id : null;
+
+  if (!storeId) {
+    console.warn("[Razorpay] No store_id in session; skipping payment lookup");
+    return;
+  }
+
+  try {
+    const payment = await fetchRazorpayPayment(txId, storeId);
+    setRazorpayPayment(payment);
+  } catch (err) {
+    console.error("Failed to load Razorpay payment:", err);
+    setRazorpayError(err.message || "Failed to load Razorpay payment");
+  }
+};
+
 
   const handleSelectCustomer = (customer) => {
     setSelectedCustomer(customer);
@@ -413,21 +453,33 @@ useEffect(() => {
     );
   }
 
-  // ✅ NEW: Authentication flow
-  // 1. No user -> Show AuthView (Login/Signup)
-  if (!user) {
-    return <AuthView onAuthSuccess={handleAuthSuccess} />;
-  }
+  // ✅ NEW: Authentication + connection flow
+// 1. No user -> Show AuthView (Login/Signup)
+if (!user) {
+  return <AuthView onAuthSuccess={handleAuthSuccess} />;
+}
 
-  // 2. User exists but no store connected -> Show ConnectStoreView
-  if (!user.has_store_connected) {
-    return (
-      <ConnectStoreView user={user} onStoreConnected={handleStoreConnected} />
-    );
-  }
+// 2. User exists but no Woo store connected -> Show WooCommerce connect view
+if (!user.has_store_connected) {
+  return (
+    <ConnectStoreView user={user} onStoreConnected={handleStoreConnected} />
+  );
+}
 
-  // 3. User exists and store connected -> Show Dashboard
-  const storeUrl = session?.store_url || user.store_url || "Store";
+// 3. Woo store connected but Razorpay NOT connected -> Show Razorpay connect view
+if (user.has_store_connected && !user.has_razorpay_connected) {
+  return (
+    <RazorpayConnectView
+      user={user}
+      token={token}
+      onConnected={handleRazorpayConnected}
+    />
+  );
+}
+
+// 4. Both Woo + Razorpay connected -> app shell / dashboard
+const storeUrl = session?.store_url || user.store_url || "Store";
+
 
   // -------- Screen switch --------
   const renderContent = () => {
