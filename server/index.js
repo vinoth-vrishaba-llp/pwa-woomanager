@@ -2,10 +2,10 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const crypto = require('crypto');
 const WooService = require('./wooService');
 const Baserow = require('./baserowClient');
 const jwt = require('jsonwebtoken'); // npm install jsonwebtoken
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
 const webPush = require('web-push');
 
 const app = express();
@@ -19,39 +19,39 @@ const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
 const VAPID_CONTACT = process.env.VAPID_CONTACT || 'mailto:vinoth@vrishaba.com';
 
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
+
+// 🔐 Encryption key for Razorpay secret (32 bytes hex or base64)
+const ENC_KEY = process.env.RAZORPAY_ENC_KEY;
+
 if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
   webPush.setVapidDetails(VAPID_CONTACT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 } else {
   console.warn('⚠️ VAPID keys not configured; web push disabled.');
 }
 
-// 🔹 Razorpay keys from env
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
-const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
-
 const allowedOrigins = [
   'http://localhost:5173',
   process.env.FRONTEND_ORIGIN,
 ].filter(Boolean);
 
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // allow mobile apps / postman with no origin
+      if (!origin) return callback(null, true);
 
-
-
-app.use(cors({
-  origin: function (origin, callback) {
-    // allow mobile apps / postman with no origin
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    } else {
-      console.warn('Blocked CORS origin:', origin);
-      return callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
-}));
-app.use(express.json({ limit: "2mb" }));
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      } else {
+        console.warn('Blocked CORS origin:', origin);
+        return callback(new Error('Not allowed by CORS'));
+      }
+    },
+    credentials: true,
+  })
+);
+app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ------------------ SIMPLE CACHE (per store + resource) ------------------
@@ -80,9 +80,46 @@ function setCached(resource, key, data) {
   cache[resource].set(key, { data, ts: Date.now() });
 }
 
+// 🔐 Encryption helpers for Razorpay secret (AES-256-GCM)
+function encryptSecret(plain) {
+  if (!ENC_KEY) throw new Error('RAZORPAY_ENC_KEY not configured');
+
+  const keyBuf = Buffer.from(
+    ENC_KEY,
+    ENC_KEY.length === 64 ? 'hex' : 'base64'
+  );
+  const iv = crypto.randomBytes(12); // GCM IV
+  const cipher = crypto.createCipheriv('aes-256-gcm', keyBuf, iv);
+
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  // Store iv + tag + ciphertext as base64
+  return Buffer.concat([iv, tag, enc]).toString('base64');
+}
+
+function decryptSecret(encB64) {
+  if (!ENC_KEY) throw new Error('RAZORPAY_ENC_KEY not configured');
+
+  const keyBuf = Buffer.from(
+    ENC_KEY,
+    ENC_KEY.length === 64 ? 'hex' : 'base64'
+  );
+  const raw = Buffer.from(encB64, 'base64');
+
+  const iv = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const ciphertext = raw.subarray(28);
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', keyBuf, iv);
+  decipher.setAuthTag(tag);
+
+  const dec = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  return dec.toString('utf8');
+}
+
 // Simple in-memory push subscriptions: { [storeId]: [subscription, ...] }
 const pushSubscriptions = new Map();
-
 
 // ------------------ RESOLVE CONFIG FROM STORE_ID ------------------
 async function resolveConfig({ config, store_id }) {
@@ -117,37 +154,39 @@ async function resolveConfig({ config, store_id }) {
   throw new Error('No config or store_id provided');
 }
 
-
-
 // ------------------ USER SIGNUP ------------------
 app.post('/api/auth/signup', async (req, res) => {
   try {
     const { username, password, store_url } = req.body;
 
     if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+      return res
+        .status(400)
+        .json({ error: 'Username and password are required' });
     }
 
     // Validate username (alphanumeric, min 3 chars)
     if (!/^[a-zA-Z0-9_-]{3,20}$/.test(username)) {
-      return res.status(400).json({ 
-        error: 'Username must be 3-20 characters (letters, numbers, -, _)' 
+      return res.status(400).json({
+        error: 'Username must be 3-20 characters (letters, numbers, -, _)',
       });
     }
 
     // Validate password (min 6 chars)
     if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      return res
+        .status(400)
+        .json({ error: 'Password must be at least 6 characters' });
     }
 
     const user = await Baserow.createUser(username, password, store_url);
 
     // Create JWT token
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        username: user.username, 
-        app_user_id: user.app_user_id 
+      {
+        id: user.id,
+        username: user.username,
+        app_user_id: user.app_user_id,
       },
       JWT_SECRET,
       { expiresIn: '30d' }
@@ -163,16 +202,19 @@ app.post('/api/auth/signup', async (req, res) => {
         username: user.username,
         app_user_id: user.app_user_id,
         has_store_connected: user.has_store_connected,
+        has_razorpay_connected: false,
       },
     });
   } catch (err) {
     console.error('Signup error:', err);
-    
+
     // Check if user already exists
     if (err.message && err.message.includes('already exists')) {
-      return res.status(409).json({ error: 'Username already exists. Please choose another or sign in.' });
+      return res.status(409).json({
+        error: 'Username already exists. Please choose another or sign in.',
+      });
     }
-    
+
     return res.status(400).json({ error: err.message });
   }
 });
@@ -183,57 +225,78 @@ app.post('/api/auth/login', async (req, res) => {
     const { username, password } = req.body;
 
     if (!username || !password) {
-      return res.status(400).json({ error: 'Username and password are required' });
+      return res
+        .status(400)
+        .json({ error: 'Username and password are required' });
     }
 
+    // Authenticate (checks username + password)
     const user = await Baserow.authenticateUser(username, password);
+
+    // Load full store row to compute connection flags
+    const row = await Baserow.findStoreByAppUserId(user.app_user_id);
+
+    const hasStoreConnected =
+      !!(row && row.consumer_key && row.consumer_secret);
+    const hasRazorpayConnected =
+      !!(row && row.razorpay_key_id && row.razorpay_key_secret_enc);
 
     // Create JWT token
     const token = jwt.sign(
-      { 
-        id: user.id, 
-        username: user.username, 
-        app_user_id: user.app_user_id 
+      {
+        id: user.id,
+        username: user.username,
+        app_user_id: user.app_user_id,
       },
       JWT_SECRET,
       { expiresIn: '30d' }
     );
 
-    console.log('✅ User logged in:', { username, app_user_id: user.app_user_id });
+    console.log('✅ User logged in:', {
+      username,
+      app_user_id: user.app_user_id,
+    });
 
     return res.json({
       success: true,
       token,
       user: {
-        id: user.id,
-        username: user.username,
-        app_user_id: user.app_user_id,
-        store_url: user.store_url,
-        has_store_connected: user.has_store_connected,
+        id: row.id,
+        username: row.username,
+        app_user_id: row.app_user_id,
+        store_url: row.store_url,
+        has_store_connected: hasStoreConnected,
+        has_razorpay_connected: hasRazorpayConnected,
       },
     });
   } catch (err) {
     console.error('Login error:', err);
-    
+
     // Provide specific error messages
-    const errorMessage = err.message.toLowerCase();
-    
-    if (errorMessage.includes('user not found') || errorMessage.includes('no user found')) {
-      return res.status(404).json({ 
+    const errorMessage = (err.message || '').toLowerCase();
+
+    if (
+      errorMessage.includes('user not found') ||
+      errorMessage.includes('no user found')
+    ) {
+      return res.status(404).json({
         error: 'User not found',
-        message: 'No account exists with this username. Please sign up first.' 
+        message: 'No account exists with this username. Please sign up first.',
       });
     }
-    
-    if (errorMessage.includes('invalid password') || errorMessage.includes('incorrect password')) {
-      return res.status(401).json({ error: 'Invalid password' });
+
+    if (
+      errorMessage.includes('invalid username or password') ||
+      errorMessage.includes('invalid password') ||
+      errorMessage.includes('incorrect password')
+    ) {
+      return res.status(401).json({ error: 'Invalid username or password' });
     }
-    
+
     // Generic authentication failure
-    return res.status(401).json({ 
-      error: 'Authentication failed',
-      message: err.message 
-    });
+    return res
+      .status(401)
+      .json({ error: 'Authentication failed', message: err.message });
   }
 });
 
@@ -241,7 +304,7 @@ app.post('/api/auth/login', async (req, res) => {
 app.get('/api/auth/me', async (req, res) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return res.status(401).json({ error: 'No token provided' });
     }
@@ -263,6 +326,9 @@ app.get('/api/auth/me', async (req, res) => {
         app_user_id: user.app_user_id,
         store_url: user.store_url,
         has_store_connected: !!(user.consumer_key && user.consumer_secret),
+        has_razorpay_connected: !!(
+          user.razorpay_key_id && user.razorpay_key_secret_enc
+        ),
       },
     });
   } catch (err) {
@@ -270,13 +336,64 @@ app.get('/api/auth/me', async (req, res) => {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
 });
+
+// ------------------ RAZORPAY CONNECT (per store) ------------------
+app.post('/api/razorpay/connect', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const app_user_id = decoded.app_user_id;
+
+    const { key_id, key_secret } = req.body || {};
+    if (!key_id || !key_secret) {
+      return res
+        .status(400)
+        .json({ error: 'key_id and key_secret are required' });
+    }
+
+    const storeRow = await Baserow.findStoreByAppUserId(app_user_id);
+    if (!storeRow) {
+      return res
+        .status(404)
+        .json({ error: 'Store not found for this user' });
+    }
+
+    const encSecret = encryptSecret(key_secret);
+
+    const updated = await Baserow.updateStoreRow(storeRow.id, {
+      razorpay_key_id: key_id,
+      razorpay_key_secret_enc: encSecret,
+    });
+
+    console.log('✅ Razorpay credentials saved for store', storeRow.id);
+
+    return res.json({
+      success: true,
+      store_id: updated.id,
+      has_razorpay_connected: !!(
+        updated.razorpay_key_id && updated.razorpay_key_secret_enc
+      ),
+    });
+  } catch (err) {
+    console.error('Razorpay connect error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // ------------------ WOO SSO: START AUTH ------------------
 app.post('/api/auth/woo/start', async (req, res) => {
   try {
     const { store_url, app_user_id } = req.body;
-    
+
     if (!store_url || !app_user_id) {
-      return res.status(400).json({ error: 'store_url and app_user_id are required' });
+      return res
+        .status(400)
+        .json({ error: 'store_url and app_user_id are required' });
     }
 
     // Verify user exists
@@ -296,17 +413,16 @@ app.post('/api/auth/woo/start', async (req, res) => {
     const encodedUserId = `${app_user_id}__${domain}`;
 
     const params = new URLSearchParams({
-  app_name: WOO_APP_NAME,
-  scope: 'read_write',
-  user_id: encodedUserId,
-  // Use hash route so origin only sees "/"
-  return_url: `${FRONTEND_ORIGIN}/#/sso-complete`,
-  callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
-});
-
+      app_name: WOO_APP_NAME,
+      scope: 'read_write',
+      user_id: encodedUserId,
+      // Use hash route so origin only sees "/"
+      return_url: `${FRONTEND_ORIGIN}/#/sso-complete`,
+      callback_url: `${API_BASE_URL}/api/auth/woo/callback`,
+    });
 
     const authUrl = `${base}${endpoint}?${params.toString()}`;
-    
+
     console.log('🚀 Starting WooCommerce SSO:', {
       username: user.username,
       original_store_url: store_url,
@@ -328,11 +444,11 @@ app.post('/api/auth/woo/callback', async (req, res) => {
   try {
     const { key_id, user_id, consumer_key, consumer_secret } = req.body || {};
 
-    console.log('🔔 Woo callback received:', { 
-      key_id, 
-      user_id, 
-      has_consumer_key: !!consumer_key, 
-      has_consumer_secret: !!consumer_secret 
+    console.log('🔔 Woo callback received:', {
+      key_id,
+      user_id,
+      has_consumer_key: !!consumer_key,
+      has_consumer_secret: !!consumer_secret,
     });
 
     if (!key_id || !user_id || !consumer_key || !consumer_secret) {
@@ -348,20 +464,27 @@ app.post('/api/auth/woo/callback', async (req, res) => {
       const parts = String(user_id).split('__');
       appUserId = parts[0];
       const domainPart = parts[1];
-      
+
       store_url = WooService.extractDomain(domainPart);
       console.log('✅ Parsed user_id correctly:', { appUserId, store_url });
     } else {
       console.warn('⚠️ user_id missing double underscore delimiter:', user_id);
-      
+
       // Fallback parsing
-      const domainMatch = String(user_id).match(/([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)$/);
-      
+      const domainMatch = String(user_id).match(
+        /([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)$/
+      );
+
       if (domainMatch) {
         const extractedDomain = domainMatch[1];
-        appUserId = String(user_id).replace(extractedDomain, '').replace(/[^a-zA-Z0-9-_]/g, '');
+        appUserId = String(user_id)
+          .replace(extractedDomain, '')
+          .replace(/[^a-zA-Z0-9-_]/g, '');
         store_url = WooService.extractDomain(extractedDomain);
-        console.log('⚠️ Extracted from malformed user_id:', { appUserId, store_url });
+        console.log('⚠️ Extracted from malformed user_id:', {
+          appUserId,
+          store_url,
+        });
       } else {
         appUserId = String(user_id).trim();
         store_url = '';
@@ -387,10 +510,10 @@ app.post('/api/auth/woo/callback', async (req, res) => {
     });
 
     const store_id = storeRow.id;
-    console.log('✅ Store credentials updated:', { 
-      store_id, 
-      app_user_id: appUserId, 
-      store_url 
+    console.log('✅ Store credentials updated:', {
+      store_id,
+      app_user_id: appUserId,
+      store_url,
     });
 
     // 2) Create webhook for order.created
@@ -411,9 +534,15 @@ app.post('/api/auth/woo/callback', async (req, res) => {
         topic: 'order.created',
         delivery_url,
       });
-      console.log('✅ Webhook created:', { webhook_id: webhook.id, topic: webhook.topic });
+      console.log('✅ Webhook created:', {
+        webhook_id: webhook.id,
+        topic: webhook.topic,
+      });
     } catch (webhookErr) {
-      console.error('⚠️ Failed to create webhook (non-fatal):', webhookErr.message);
+      console.error(
+        '⚠️ Failed to create webhook (non-fatal):',
+        webhookErr.message
+      );
     }
 
     // 3) Save webhook row in Baserow
@@ -429,17 +558,20 @@ app.post('/api/auth/woo/callback', async (req, res) => {
         });
         console.log('✅ Webhook saved to Baserow');
       } catch (webhookRowErr) {
-        console.error('⚠️ Failed to save webhook to Baserow (non-fatal):', webhookRowErr.message);
+        console.error(
+          '⚠️ Failed to save webhook to Baserow (non-fatal):',
+          webhookRowErr.message
+        );
       }
     }
 
     console.log('🎉 WooCommerce SSO callback completed successfully');
 
-    return res.json({ 
-      ok: true, 
-      store_id, 
+    return res.json({
+      ok: true,
+      store_id,
       app_user_id: appUserId,
-      store_url 
+      store_url,
     });
   } catch (err) {
     console.error('❌ Woo callback error:', err);
@@ -480,9 +612,14 @@ app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
 
       const bodyParts = [];
 
-      if (payload.billing && (payload.billing.first_name || payload.billing.last_name)) {
+      if (
+        payload.billing &&
+        (payload.billing.first_name || payload.billing.last_name)
+      ) {
         bodyParts.push(
-          `${payload.billing.first_name || ''} ${payload.billing.last_name || ''}`.trim()
+          `${payload.billing.first_name || ''} ${
+            payload.billing.last_name || ''
+          }`.trim()
         );
       }
       if (payload.total) {
@@ -519,7 +656,6 @@ app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
   }
 });
 
-
 // ------------------ STORE LOOKUP FOR FRONTEND (SSO) ------------------
 app.post('/api/store/by-app-user', async (req, res) => {
   try {
@@ -530,7 +666,9 @@ app.post('/api/store/by-app-user', async (req, res) => {
 
     const row = await Baserow.findStoreByAppUserId(app_user_id);
     if (!row) {
-      return res.status(404).json({ error: 'Store not found for this app_user_id' });
+      return res
+        .status(404)
+        .json({ error: 'Store not found for this app_user_id' });
     }
 
     return res.json({
@@ -575,8 +713,10 @@ app.post('/api/bootstrap', async (req, res) => {
     }
 
     const [orders, products, report] = await Promise.all([
-      cachedOrders || WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
-      cachedProducts || WooService.getProducts(resolvedConfig, resolvedConfig.useMock),
+      cachedOrders ||
+        WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
+      cachedProducts ||
+        WooService.getProducts(resolvedConfig, resolvedConfig.useMock),
       cachedReport ||
         WooService.getSalesReport(resolvedConfig, {
           date_min: startDate,
@@ -612,7 +752,6 @@ app.post('/api/bootstrap', async (req, res) => {
   }
 });
 
-
 // ------------------ HEALTH ------------------
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -634,16 +773,19 @@ app.post('/api/auth/test', async (req, res) => {
   }
 });
 
-app.get("/api/server-time", (req, res) => {
+app.get('/api/server-time', (req, res) => {
   res.json({ now: new Date().toISOString() });
 });
+
 // ------------------ PUSH SUBSCRIBE ------------------
 app.post('/api/push/subscribe', (req, res) => {
   try {
     const { store_id, subscription } = req.body || {};
 
     if (!store_id || !subscription) {
-      return res.status(400).json({ error: 'store_id and subscription are required' });
+      return res
+        .status(400)
+        .json({ error: 'store_id and subscription are required' });
     }
 
     const sid = String(store_id);
@@ -657,7 +799,12 @@ app.post('/api/push/subscribe', (req, res) => {
     if (!already) {
       existing.push(subscription);
       pushSubscriptions.set(sid, existing);
-      console.log('✅ Push subscription added for store', sid, 'total:', existing.length);
+      console.log(
+        '✅ Push subscription added for store',
+        sid,
+        'total:',
+        existing.length
+      );
     }
 
     return res.json({ ok: true });
@@ -667,13 +814,15 @@ app.post('/api/push/subscribe', (req, res) => {
   }
 });
 
-
 // Orders
 app.post('/api/orders', async (req, res) => {
   try {
     const { config, store_id } = req.body;
     const resolvedConfig = await resolveConfig({ config, store_id });
-    const orders = await WooService.getOrders(resolvedConfig, resolvedConfig.useMock);
+    const orders = await WooService.getOrders(
+      resolvedConfig,
+      resolvedConfig.useMock
+    );
     res.json({ orders });
   } catch (err) {
     console.error('Orders API error:', err);
@@ -686,7 +835,10 @@ app.post('/api/products', async (req, res) => {
   try {
     const { config, store_id } = req.body;
     const resolvedConfig = await resolveConfig({ config, store_id });
-    const products = await WooService.getProducts(resolvedConfig, resolvedConfig.useMock);
+    const products = await WooService.getProducts(
+      resolvedConfig,
+      resolvedConfig.useMock
+    );
     res.json({ products });
   } catch (err) {
     console.error('Products API error:', err);
@@ -694,15 +846,25 @@ app.post('/api/products', async (req, res) => {
   }
 });
 
-async function getRazorpayPayment(paymentId) {
-  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-    throw new Error('Razorpay keys are not configured on the server');
+// 🔹 Get Razorpay payment using store-specific keys from Baserow
+async function getRazorpayPayment(storeId, paymentId) {
+  const row = await Baserow.getStoreById(storeId);
+  if (!row) {
+    throw new Error(`Store not found for id ${storeId}`);
   }
 
-  const authToken = Buffer.from(
-    `${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`,
-    'utf8'
-  ).toString('base64');
+  const keyId = row.razorpay_key_id;
+  const encSecret = row.razorpay_key_secret_enc;
+
+  if (!keyId || !encSecret) {
+    throw new Error('Razorpay keys are not configured for this store');
+  }
+
+  const secret = decryptSecret(encSecret);
+
+  const authToken = Buffer.from(`${keyId}:${secret}`, 'utf8').toString(
+    'base64'
+  );
 
   const url = `https://api.razorpay.com/v1/payments/${paymentId}`;
 
@@ -724,16 +886,18 @@ async function getRazorpayPayment(paymentId) {
 
 /**
  * 🔹 Backend endpoint to fetch Razorpay payment details
- * Body: { transaction_id: "pay_xxx" }
+ * Body: { transaction_id: "pay_xxx", store_id: number }
  */
 app.post('/api/razorpay/payment', async (req, res) => {
   try {
-    const { transaction_id } = req.body || {};
-    if (!transaction_id) {
-      return res.status(400).json({ error: 'transaction_id is required' });
+    const { transaction_id, store_id } = req.body || {};
+    if (!transaction_id || !store_id) {
+      return res
+        .status(400)
+        .json({ error: 'transaction_id and store_id are required' });
     }
 
-    const payment = await getRazorpayPayment(transaction_id);
+    const payment = await getRazorpayPayment(store_id, transaction_id);
     return res.json({ payment });
   } catch (err) {
     console.error('Razorpay payment route error:', err);
@@ -829,7 +993,6 @@ function enrichCustomersWithOrders(customersBase, orders) {
 
   return customers;
 }
-
 
 // Customers (enriched)
 app.post('/api/customers', async (req, res) => {
