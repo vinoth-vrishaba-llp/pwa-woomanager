@@ -26,6 +26,19 @@ import SsoComplete from "./components/SsoComplete";
 import { fetchRazorpayPayment } from "./services/api";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
+
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
 
 const App = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -258,6 +271,65 @@ if (path.startsWith("/sso-complete")) {
       setLoading(false);
     }
   }, [session]);
+
+    const subscribeToPush = useCallback(
+    async (storeId) => {
+      try {
+        if (
+          !('serviceWorker' in navigator) ||
+          !('PushManager' in window) ||
+          !VAPID_PUBLIC_KEY
+        ) {
+          console.log('[Push] Not supported or VAPID key missing');
+          return;
+        }
+
+        if (!storeId) {
+          console.log('[Push] No storeId, skipping subscription');
+          return;
+        }
+
+        // Request notification permission if needed
+        if ('Notification' in window && Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+
+        if ('Notification' in window && Notification.permission !== 'granted') {
+          console.log('[Push] Notification permission not granted');
+          return;
+        }
+
+        const reg = await navigator.serviceWorker.ready;
+
+        let subscription = await reg.pushManager.getSubscription();
+        if (!subscription) {
+          subscription = await reg.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+          });
+        }
+
+        await fetch(`${API_BASE_URL}/api/push/subscribe`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            store_id: storeId,
+            subscription,
+          }),
+        });
+
+        console.log('[Push] Subscribed for store', storeId);
+      } catch (err) {
+        console.error('[Push] Subscription failed:', err);
+      }
+    },
+    []
+  );
+useEffect(() => {
+    if (session?.type === 'sso' && session.store_id) {
+      subscribeToPush(session.store_id);
+    }
+  }, [session, subscribeToPush]);
 
   useEffect(() => {
     if (session) {

@@ -6,6 +6,7 @@ const WooService = require('./wooService');
 const Baserow = require('./baserowClient');
 const jwt = require('jsonwebtoken'); // npm install jsonwebtoken
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-this';
+const webPush = require('web-push');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -14,6 +15,15 @@ const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173';
 const API_BASE_URL = process.env.API_BASE_URL || `http://localhost:${PORT}`;
 const WOO_APP_NAME = process.env.WOO_APP_NAME || 'WooManager';
 
+const VAPID_PUBLIC_KEY = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE_KEY = process.env.VAPID_PRIVATE_KEY;
+const VAPID_CONTACT = process.env.VAPID_CONTACT || 'mailto:vinoth@vrishaba.com';
+
+if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY) {
+  webPush.setVapidDetails(VAPID_CONTACT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+} else {
+  console.warn('⚠️ VAPID keys not configured; web push disabled.');
+}
 
 // 🔹 Razorpay keys from env
 const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID;
@@ -21,8 +31,11 @@ const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
 
 const allowedOrigins = [
   'http://localhost:5173',
-  process.env.FRONTEND_ORIGIN,       
-];
+  process.env.FRONTEND_ORIGIN,
+].filter(Boolean);
+
+
+
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -66,6 +79,10 @@ function getCached(resource, key, ttlMs) {
 function setCached(resource, key, data) {
   cache[resource].set(key, { data, ts: Date.now() });
 }
+
+// Simple in-memory push subscriptions: { [storeId]: [subscription, ...] }
+const pushSubscriptions = new Map();
+
 
 // ------------------ RESOLVE CONFIG FROM STORE_ID ------------------
 async function resolveConfig({ config, store_id }) {
@@ -449,12 +466,59 @@ app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
       payload,
     });
 
+    // 🔔 Send Web Push for order.created
+    const sid = String(storeId);
+    const subs = pushSubscriptions.get(sid) || [];
+
+    if (
+      VAPID_PUBLIC_KEY &&
+      VAPID_PRIVATE_KEY &&
+      topic === 'order.created' &&
+      subs.length > 0
+    ) {
+      const orderId = payload.id || payload.order_id || 'New';
+
+      const bodyParts = [];
+
+      if (payload.billing && (payload.billing.first_name || payload.billing.last_name)) {
+        bodyParts.push(
+          `${payload.billing.first_name || ''} ${payload.billing.last_name || ''}`.trim()
+        );
+      }
+      if (payload.total) {
+        bodyParts.push(`₹${payload.total}`);
+      }
+
+      const notificationBody =
+        bodyParts.length > 0 ? bodyParts.join(' • ') : 'New order created';
+
+      const notificationPayload = JSON.stringify({
+        title: `New order #${orderId}`,
+        body: notificationBody,
+        orderId,
+        storeId: sid,
+      });
+
+      subs.forEach((sub) => {
+        webPush
+          .sendNotification(sub, notificationPayload)
+          .catch((err) => {
+            console.warn(
+              'Push send failed for a subscription:',
+              err.statusCode || err.message
+            );
+            // TODO: If statusCode === 410, delete dead subscription
+          });
+      });
+    }
+
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('Woo webhook handler error:', err);
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 // ------------------ STORE LOOKUP FOR FRONTEND (SSO) ------------------
 app.post('/api/store/by-app-user', async (req, res) => {
@@ -573,6 +637,36 @@ app.post('/api/auth/test', async (req, res) => {
 app.get("/api/server-time", (req, res) => {
   res.json({ now: new Date().toISOString() });
 });
+// ------------------ PUSH SUBSCRIBE ------------------
+app.post('/api/push/subscribe', (req, res) => {
+  try {
+    const { store_id, subscription } = req.body || {};
+
+    if (!store_id || !subscription) {
+      return res.status(400).json({ error: 'store_id and subscription are required' });
+    }
+
+    const sid = String(store_id);
+    const existing = pushSubscriptions.get(sid) || [];
+
+    // Avoid exact duplicates
+    const already = existing.some(
+      (sub) => JSON.stringify(sub) === JSON.stringify(subscription)
+    );
+
+    if (!already) {
+      existing.push(subscription);
+      pushSubscriptions.set(sid, existing);
+      console.log('✅ Push subscription added for store', sid, 'total:', existing.length);
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Push subscribe error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // Orders
 app.post('/api/orders', async (req, res) => {

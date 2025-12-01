@@ -57,3 +57,59 @@ self.addEventListener('fetch', (event) => {
     caches.match(request).then((cached) => cached || fetch(request))
   );
 });
+// 🔔 Web Push handler
+self.addEventListener('push', (event) => {
+  if (!event.data) {
+    return;
+  }
+
+  let data = {};
+  try {
+    data = event.data.json();
+  } catch (e) {
+    data = { title: 'New notification', body: event.data.text() };
+  }
+
+  const title = data.title || 'New notification';
+  const body = data.body || '';
+  const orderId = data.orderId;
+  const storeId = data.storeId;
+
+  const options = {
+    body,
+    icon: '/Woo_logo_color-192.png',
+    badge: '/Woo_logo_color-192.png',
+    data: {
+      orderId,
+      storeId,
+      url: '/', // you can change to a deep-link later
+    },
+  };
+
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+// Handle notification click
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const urlToOpen = event.notification.data?.url || '/';
+
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) {
+          client.focus();
+          client.postMessage({
+            action: 'open-order',
+            orderId: event.notification.data?.orderId,
+          });
+          return;
+        }
+      }
+      if (clients.openWindow) {
+        return clients.openWindow(urlToOpen);
+      }
+    })
+  );
+});
