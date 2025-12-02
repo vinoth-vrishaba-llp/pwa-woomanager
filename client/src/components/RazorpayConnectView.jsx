@@ -6,6 +6,7 @@ const RazorpayConnectView = ({ token, onConnected }) => {
   const [keyId, setKeyId] = useState("");
   const [keySecret, setKeySecret] = useState("");
   const [loading, setLoading] = useState(false);
+  const [skipLoading, setSkipLoading] = useState(false);
   const [error, setError] = useState(null);
 
   const handleSubmit = async (e) => {
@@ -36,7 +37,7 @@ const RazorpayConnectView = ({ token, onConnected }) => {
         throw new Error(json.error || "Failed to connect Razorpay");
       }
 
-      onConnected(json);
+      onConnected(json); // proceed
     } catch (err) {
       console.error("Razorpay connect error:", err);
       setError(err.message || "Failed to connect Razorpay");
@@ -45,15 +46,42 @@ const RazorpayConnectView = ({ token, onConnected }) => {
     }
   };
 
+  const handleSkip = async () => {
+    setError(null);
+    try {
+      setSkipLoading(true);
+      const res = await fetch(`${API_BASE_URL}/api/razorpay/skip`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "Failed to skip Razorpay");
+      }
+
+      // pass skipped flag so parent knows to go to dashboard
+      onConnected({ skipped: true, ...json });
+    } catch (err) {
+      console.error("Razorpay skip error:", err);
+      setError(err.message || "Failed to skip Razorpay");
+    } finally {
+      setSkipLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center px-4">
       <div className="max-w-md mx-auto bg-white rounded-2xl shadow-lg p-6 space-y-4">
         <h1 className="text-lg font-semibold text-gray-900">
-          Connect Razorpay
+          Connect Razorpay (optional)
         </h1>
         <p className="text-xs text-gray-500">
           Enter your Razorpay Key ID and Key Secret for this store. We store them
           encrypted and use them only to fetch payment details for your orders.
+          If you don't use Razorpay, you can skip this step.
         </p>
 
         <form onSubmit={handleSubmit} className="space-y-3">
@@ -82,11 +110,7 @@ const RazorpayConnectView = ({ token, onConnected }) => {
             />
           </div>
 
-          {error && (
-            <p className="text-xs text-red-500">
-              {error}
-            </p>
-          )}
+          {error && <p className="text-xs text-red-500">{error}</p>}
 
           <button
             type="submit"
@@ -96,6 +120,17 @@ const RazorpayConnectView = ({ token, onConnected }) => {
             {loading ? "Connecting..." : "Connect Razorpay"}
           </button>
         </form>
+
+        <div className="pt-2">
+          <button
+            type="button"
+            onClick={handleSkip}
+            disabled={skipLoading}
+            className="w-full border border-gray-200 text-sm font-medium py-2 rounded-lg hover:bg-gray-50 disabled:opacity-60"
+          >
+            {skipLoading ? "Skipping..." : "Skip (I don't use Razorpay)"}
+          </button>
+        </div>
       </div>
     </div>
   );

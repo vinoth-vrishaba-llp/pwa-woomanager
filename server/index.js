@@ -516,7 +516,7 @@ app.post('/api/auth/woo/callback', async (req, res) => {
       store_url,
     });
 
-    // 2) Create webhook for order.created
+    // 2) Prepare webhook creation config
     const configForWebhook = {
       url: WooService.cleanUrl(store_url),
       key: consumer_key,
@@ -526,42 +526,38 @@ app.post('/api/auth/woo/callback', async (req, res) => {
 
     const delivery_url = `${API_BASE_URL}/api/webhooks/woocommerce/${store_id}`;
 
-    let webhook;
-    try {
-      console.log('🔔 Creating WooCommerce webhook...');
-      webhook = await WooService.createWebhook(configForWebhook, {
-        name: 'WooManager – Order created',
-        topic: 'order.created',
-        delivery_url,
-      });
-      console.log('✅ Webhook created:', {
-        webhook_id: webhook.id,
-        topic: webhook.topic,
-      });
-    } catch (webhookErr) {
-      console.error(
-        '⚠️ Failed to create webhook (non-fatal):',
-        webhookErr.message
-      );
-    }
+    // 3) Create both order.created and order.updated webhooks and save them
+    const webhookTopics = [
+      { name: 'WooManager – Order created', topic: 'order.created' },
+      { name: 'WooManager – Order updated', topic: 'order.updated' },
+    ];
 
-    // 3) Save webhook row in Baserow
-    if (webhook) {
+    for (const w of webhookTopics) {
       try {
-        console.log('💾 Saving webhook to Baserow...');
-        await Baserow.createWebhookRow({
-          store_id,
-          webhook_id: webhook.id,
-          topic: webhook.topic,
-          delivery_url: webhook.delivery_url,
-          status: webhook.status,
+        console.log(`🔔 Creating WooCommerce webhook for ${w.topic}...`);
+        const created = await WooService.createWebhook(configForWebhook, {
+          name: w.name,
+          topic: w.topic,
+          delivery_url,
         });
-        console.log('✅ Webhook saved to Baserow');
-      } catch (webhookRowErr) {
-        console.error(
-          '⚠️ Failed to save webhook to Baserow (non-fatal):',
-          webhookRowErr.message
-        );
+
+        console.log('✅ Webhook created:', { webhook_id: created.id, topic: created.topic });
+
+        // Save webhook row in Baserow
+        try {
+          await Baserow.createWebhookRow({
+            store_id,
+            webhook_id: created.id,
+            topic: created.topic,
+            delivery_url: created.delivery_url,
+            status: created.status,
+          });
+          console.log('✅ Webhook saved to Baserow for topic', created.topic);
+        } catch (webhookRowErr) {
+          console.error('⚠️ Failed to save webhook to Baserow (non-fatal):', webhookRowErr.message || webhookRowErr);
+        }
+      } catch (webhookErr) {
+        console.error(`⚠️ Failed to create ${w.topic} webhook (non-fatal):`, webhookErr.message || webhookErr);
       }
     }
 
@@ -579,6 +575,7 @@ app.post('/api/auth/woo/callback', async (req, res) => {
   }
 });
 
+
 // ------------------ WOO WEBHOOK RECEIVER ------------------
 app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
   try {
@@ -588,65 +585,73 @@ app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
     const resource = req.header('X-WC-Webhook-Resource') || null;
     const event = req.header('X-WC-Webhook-Event') || null;
 
-    const payload = req.body;
+    const payload = req.body || {};
 
-    await Baserow.createNotificationRow({
-      store_id: Number(storeId),
+    // Debug logs to help troubleshoot why notifications weren't being stored
+    console.log('🔔 Received Woo webhook', {
+      storeId,
       topic,
       resource,
       event,
-      payload,
+      bodyPreview: JSON.stringify(payload).slice(0, 2000), // trim long bodies
+      headersPreview: {
+        'x-wc-webhook-topic': req.header('X-WC-Webhook-Topic'),
+        'content-type': req.header('content-type'),
+      },
     });
 
-    // 🔔 Send Web Push for order.created
+    // Try to persist notification row — catch errors but continue
+    try {
+      await Baserow.createNotificationRow({
+        store_id: Number(storeId),
+        topic,
+        resource,
+        event,
+        payload,
+      });
+      console.log('✅ Notification row created in Baserow');
+    } catch (notifErr) {
+      console.error('❌ Failed to create notification row:', notifErr.message || notifErr);
+      // don't fail the webhook; still attempt push notifications
+    }
+
+    // Push notifications for order.created and order.updated
     const sid = String(storeId);
     const subs = pushSubscriptions.get(sid) || [];
 
-    if (
-      VAPID_PUBLIC_KEY &&
-      VAPID_PRIVATE_KEY &&
-      topic === 'order.created' &&
-      subs.length > 0
-    ) {
-      const orderId = payload.id || payload.order_id || 'New';
+    if (VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && subs.length > 0) {
+      // Only send push for order.created / order.updated
+      if (topic === 'order.created' || topic === 'order.updated') {
+        const orderId = payload.id || payload.order_id || (payload.order && payload.order.id) || 'New';
 
-      const bodyParts = [];
+        const bodyParts = [];
+        if (payload.billing && (payload.billing.first_name || payload.billing.last_name)) {
+          bodyParts.push(`${payload.billing.first_name || ''} ${payload.billing.last_name || ''}`.trim());
+        }
+        if (payload.total) {
+          bodyParts.push(`₹${payload.total}`);
+        }
 
-      if (
-        payload.billing &&
-        (payload.billing.first_name || payload.billing.last_name)
-      ) {
-        bodyParts.push(
-          `${payload.billing.first_name || ''} ${
-            payload.billing.last_name || ''
-          }`.trim()
-        );
-      }
-      if (payload.total) {
-        bodyParts.push(`₹${payload.total}`);
-      }
+        const notificationBody = bodyParts.length > 0 ? bodyParts.join(' • ') : (topic === 'order.created' ? 'New order created' : 'Order updated');
 
-      const notificationBody =
-        bodyParts.length > 0 ? bodyParts.join(' • ') : 'New order created';
+        const notificationPayload = JSON.stringify({
+          title: topic === 'order.created' ? `New order #${orderId}` : `Order updated #${orderId}`,
+          body: notificationBody,
+          orderId,
+          storeId: sid,
+          topic,
+        });
 
-      const notificationPayload = JSON.stringify({
-        title: `New order #${orderId}`,
-        body: notificationBody,
-        orderId,
-        storeId: sid,
-      });
-
-      subs.forEach((sub) => {
-        webPush
-          .sendNotification(sub, notificationPayload)
-          .catch((err) => {
-            console.warn(
-              'Push send failed for a subscription:',
-              err.statusCode || err.message
-            );
-            // TODO: If statusCode === 410, delete dead subscription
+        for (const sub of subs) {
+          webPush.sendNotification(sub, notificationPayload).catch((err) => {
+            console.warn('Push send failed for one subscription:', err.statusCode || err.message);
+            // If 410 (gone) the subscription is invalid — log to prune later.
+            if (err.statusCode === 410 || (err.body && err.body.includes && err.body.includes('410'))) {
+              console.log('➡️ Subscription gone - consider removing it from DB for store', sid);
+            }
           });
-      });
+        }
+      }
     }
 
     return res.status(200).json({ ok: true });
@@ -655,6 +660,7 @@ app.post('/api/webhooks/woocommerce/:storeId', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
 
 // ------------------ STORE LOOKUP FOR FRONTEND (SSO) ------------------
 app.post('/api/store/by-app-user', async (req, res) => {
@@ -904,6 +910,37 @@ app.post('/api/razorpay/payment', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Mark Razorpay as intentionally skipped by the user
+app.post('/api/razorpay/skip', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No token provided' });
+    }
+    const token = authHeader.substring(7);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const app_user_id = decoded.app_user_id;
+
+    const storeRow = await Baserow.findStoreByAppUserId(app_user_id);
+    if (!storeRow) return res.status(404).json({ error: 'Store not found' });
+
+    const updated = await Baserow.updateStoreRow(storeRow.id, {
+      razorpay_skipped: true,
+    });
+
+    return res.json({
+      ok: true,
+      store_id: updated.id,
+      has_razorpay_connected: !!(updated.razorpay_key_id && updated.razorpay_key_secret_enc),
+      razorpay_skipped: !!updated.razorpay_skipped,
+    });
+  } catch (err) {
+    console.error('razorpay skip error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 
 // Categories (still expects config in query for now)
 app.get('/api/categories', async (req, res) => {
