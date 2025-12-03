@@ -60,6 +60,7 @@ const cache = {
   products: new Map(),
   customers: new Map(),
   report: new Map(),
+  abandonedCarts: new Map(),
 };
 
 function cacheKeyFromConfig(config) {
@@ -153,6 +154,123 @@ async function resolveConfig({ config, store_id }) {
 
   throw new Error('No config or store_id provided');
 }
+
+// ------------------ ABANDONED CART POLLING + PUSH ------------------
+
+// storeId -> Set of abandoned cart IDs we've already notified about
+const abandonedCartSeen = new Map();
+
+/**
+ * Check abandoned carts for a single store and send push notifications
+ * for carts we haven't notified yet.
+ */
+async function checkAbandonedCartsForStore(storeId) {
+  try {
+    // Reuse your existing config resolver
+    const resolvedConfig = await resolveConfig({ store_id: storeId });
+
+    const carts = await WooService.getAbandonedCarts(
+      resolvedConfig,
+      resolvedConfig.useMock
+    );
+
+    const sid = String(storeId);
+    let seen = abandonedCartSeen.get(sid);
+    if (!seen) {
+      seen = new Set();
+      abandonedCartSeen.set(sid, seen);
+    }
+
+    const subs = pushSubscriptions.get(sid) || [];
+    if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY || subs.length === 0) {
+      // No subscribers → nothing to push
+      return;
+    }
+
+    for (const cart of carts) {
+      if (!cart || !cart.id) continue;
+      if (seen.has(cart.id)) continue; // already notified
+
+      // Mark as seen BEFORE sending, to avoid duplicates on failures
+      seen.add(cart.id);
+
+      const itemCount = cart.items_count || (Array.isArray(cart.items) ? cart.items.length : null);
+      const customerLabel = cart.email || 'Customer';
+
+      const bodyParts = [];
+      bodyParts.push(`${customerLabel} left items in the cart`);
+      if (itemCount != null) {
+        bodyParts.push(`${itemCount} item${itemCount === 1 ? '' : 's'}`);
+      }
+
+      const notificationBody = bodyParts.join(' • ');
+
+      const notificationPayload = JSON.stringify({
+        title: 'Abandoned cart alert',
+        body: notificationBody,
+        type: 'abandoned_cart',
+        cartId: cart.id,
+        storeId: sid,
+      });
+
+      for (const sub of subs) {
+        webPush
+          .sendNotification(sub, notificationPayload)
+          .catch((err) => {
+            console.warn(
+              'Abandoned cart push send failed for one subscription:',
+              err.statusCode || err.message
+            );
+            if (
+              err.statusCode === 410 ||
+              (err.body &&
+                err.body.includes &&
+                err.body.includes('410'))
+            ) {
+              console.log(
+                '➡️ Subscription gone - consider pruning it for store',
+                sid
+              );
+            }
+          });
+      }
+    }
+  } catch (err) {
+    console.error(
+      'Abandoned cart check failed for store',
+      storeId,
+      err.message || err
+    );
+  }
+}
+
+/**
+ * Poll all connected stores periodically for abandoned carts
+ */
+async function pollAbandonedCartsAllStores() {
+  try {
+    const stores = await Baserow.getAllStores();
+    if (!Array.isArray(stores) || !stores.length) return;
+
+    for (const store of stores) {
+      // Only stores with Woo connected
+      if (!store.consumer_key || !store.consumer_secret) continue;
+
+      await checkAbandonedCartsForStore(store.id);
+    }
+  } catch (err) {
+    console.error('Global abandoned cart poll failed:', err.message || err);
+  }
+}
+
+// Poll every 5 minutes (tune this as you like)
+const ABANDONED_CART_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+setInterval(() => {
+  pollAbandonedCartsAllStores().catch((err) => {
+    console.error('Error in abandoned cart polling loop:', err);
+  });
+}, ABANDONED_CART_POLL_INTERVAL_MS);
 
 // ------------------ USER SIGNUP ------------------
 app.post('/api/auth/signup', async (req, res) => {
@@ -688,7 +806,7 @@ app.post('/api/store/by-app-user', async (req, res) => {
   }
 });
 
-// ------------------ BOOTSTRAP: ORDERS + PRODUCTS + CUSTOMERS + REPORT ------------------
+// ------------------ BOOTSTRAP: ORDERS + PRODUCTS + CUSTOMERS + REPORT + ABANDONED CARTS ------------------
 app.post('/api/bootstrap', async (req, res) => {
   try {
     const { config, store_id } = req.body;
@@ -700,6 +818,7 @@ app.post('/api/bootstrap', async (req, res) => {
     const cachedProducts = getCached('products', key, 2 * 60 * 60 * 1000);
     const cachedCustomers = getCached('customers', key, 2 * 60 * 60 * 1000);
     const cachedReport = getCached('report', key, 5 * 60 * 1000);
+    const cachedAbandoned = getCached('abandonedCarts', key, 60 * 1000); // ✅ NEW (short TTL)
 
     // ---- default last 30 days (same logic as /api/reports/sales) ----
     let startDate;
@@ -718,7 +837,7 @@ app.post('/api/bootstrap', async (req, res) => {
       endDate = fmt(end);
     }
 
-    const [orders, products, report] = await Promise.all([
+    const [orders, products, report, abandoned_carts] = await Promise.all([
       cachedOrders ||
         WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
       cachedProducts ||
@@ -728,6 +847,11 @@ app.post('/api/bootstrap', async (req, res) => {
           date_min: startDate,
           date_max: endDate,
         }),
+      cachedAbandoned ||
+        WooService.getAbandonedCarts(
+          resolvedConfig,
+          resolvedConfig.useMock
+        ), // ✅ NEW
     ]);
 
     let customers = cachedCustomers;
@@ -743,12 +867,14 @@ app.post('/api/bootstrap', async (req, res) => {
     if (!cachedOrders) setCached('orders', key, orders);
     if (!cachedProducts) setCached('products', key, products);
     if (!cachedReport) setCached('report', key, report);
+    if (!cachedAbandoned) setCached('abandonedCarts', key, abandoned_carts); // ✅ NEW
 
     return res.json({
       orders,
       products,
       customers,
       report,
+      abandoned_carts, // ✅ NEW FIELD
       date_min: startDate,
       date_max: endDate,
     });
@@ -757,6 +883,45 @@ app.post('/api/bootstrap', async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// Abandoned carts list
+app.post('/api/abandoned-carts', async (req, res) => {
+  try {
+    const { config, store_id } = req.body;
+    const resolvedConfig = await resolveConfig({ config, store_id });
+
+    const carts = await WooService.getAbandonedCarts(
+      resolvedConfig,
+      resolvedConfig.useMock
+    );
+
+    res.json({ carts });
+  } catch (err) {
+    console.error('Abandoned carts API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Single abandoned cart by ID
+app.post('/api/abandoned-carts/:cartId', async (req, res) => {
+  try {
+    const { cartId } = req.params;
+    const { config, store_id } = req.body;
+    const resolvedConfig = await resolveConfig({ config, store_id });
+
+    const cart = await WooService.getAbandonedCartById(
+      resolvedConfig,
+      cartId
+    );
+
+    res.json({ cart });
+  } catch (err) {
+    console.error('Abandoned cart detail API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 
 // ------------------ HEALTH ------------------
 app.get('/api/health', (req, res) => {

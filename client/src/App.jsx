@@ -22,11 +22,11 @@ import CustomerDetails from "./components/CustomerDetails";
 import Notifications from "./components/Notifications";
 import SsoComplete from "./components/SsoComplete";
 import RazorpayConnectView from "./components/RazorpayConnectView";
+import AbandonedCarts from "./components/AbandonedCarts";
+import AbandonedCartDetails from "./components/AbandonedCartDetails";
 
+import { fetchRazorpayPayment, fetchAbandonedCarts, fetchAbandonedCart } from "./services/api";
 
-// 🔹 import API helper
-// 🔹 import API helpers
-import { fetchRazorpayPayment, fetchNotifications } from "./services/api";
 
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
@@ -88,6 +88,11 @@ const App = () => {
   const [notifications, setNotifications] = useState([]);
 const [notificationsLoading, setNotificationsLoading] = useState(false);
 const [notificationsError, setNotificationsError] = useState(null);
+
+const [selectedAbandonedCart, setSelectedAbandonedCart] = useState(null);
+const [abandonedCartDetailLoading, setAbandonedCartDetailLoading] = useState(false);
+const [abandonedCartDetailError, setAbandonedCartDetailError] = useState(null);
+
 
   // 🔹 Razorpay payment for the selected order
   const [razorpayPayment, setRazorpayPayment] = useState(null);
@@ -281,6 +286,51 @@ const handleRazorpayConnected = ({ store_id }) => {
   localStorage.removeItem("woo_manager_config");
 };
 
+const handleSelectAbandonedCart = async (cart) => {
+  if (!session || session.type !== "sso" || !session.store_id) return;
+
+  setSelectedAbandonedCart(cart);
+  setAbandonedCartDetailError(null);
+  setAbandonedCartDetailLoading(true);
+  setActiveTab("abandoned-cart-details");
+
+  try {
+    // Pull fresh detail from backend if available
+    const fullCart = await fetchAbandonedCart(session.store_id, cart.id);
+    setSelectedAbandonedCart(fullCart || cart);
+  } catch (err) {
+    console.error("Abandoned cart detail fetch failed:", err);
+    setAbandonedCartDetailError(
+      err.message || "Failed to fetch cart details"
+    );
+  } finally {
+    setAbandonedCartDetailLoading(false);
+  }
+};
+
+const refreshSelectedAbandonedCart = async () => {
+  if (!session || session.type !== "sso" || !session.store_id || !selectedAbandonedCart) return;
+
+  setAbandonedCartDetailError(null);
+  setAbandonedCartDetailLoading(true);
+
+  try {
+    const fullCart = await fetchAbandonedCart(
+      session.store_id,
+      selectedAbandonedCart.id
+    );
+    setSelectedAbandonedCart(fullCart || selectedAbandonedCart);
+  } catch (err) {
+    console.error("Abandoned cart detail refresh failed:", err);
+    setAbandonedCartDetailError(
+      err.message || "Failed to refresh cart details"
+    );
+  } finally {
+    setAbandonedCartDetailLoading(false);
+  }
+};
+
+
 
   // -------- Fetch everything via /api/bootstrap --------
   const fetchAllData = useCallback(async () => {
@@ -406,16 +456,62 @@ const handleRazorpayConnected = ({ store_id }) => {
     []
   );
 useEffect(() => {
-    if (session?.type === 'sso' && session.store_id) {
-      subscribeToPush(session.store_id);
-    }
-  }, [session, subscribeToPush]);
+  if (session?.type === "sso" && session.store_id) {
+    subscribeToPush(session.store_id);
+  }
+}, [session, subscribeToPush]);
 
-  useEffect(() => {
-    if (session) {
-      fetchAllData();
+// 🔔 Listen for messages from the service worker (abandoned cart / others)
+useEffect(() => {
+  if (!("serviceWorker" in navigator)) return;
+
+  const handler = async (event) => {
+    const data = event.data || {};
+    if (!data.action) return;
+
+    // 🔥 Abandoned cart push → open details
+    if (data.action === "open-abandoned-cart" && data.cartId) {
+      if (!session || session.type !== "sso" || !session.store_id) {
+        // No valid session yet -> just go to abandoned list
+        setActiveTab("abandoned-carts");
+        return;
+      }
+
+      setActiveTab("abandoned-cart-details");
+      setAbandonedCartDetailLoading(true);
+      setAbandonedCartDetailError(null);
+
+      try {
+        const fullCart = await fetchAbandonedCart(
+          session.store_id,
+          data.cartId
+        );
+        setSelectedAbandonedCart(fullCart);
+      } catch (err) {
+        console.error("Abandoned cart from push failed:", err);
+        setAbandonedCartDetailError(
+          err.message || "Failed to open abandoned cart"
+        );
+      } finally {
+        setAbandonedCartDetailLoading(false);
+      }
     }
-  }, [session, fetchAllData]);
+
+    // if later you add other actions (open-order, etc.), handle them here too
+  };
+
+  navigator.serviceWorker.addEventListener("message", handler);
+  return () => {
+    navigator.serviceWorker.removeEventListener("message", handler);
+  };
+}, [session]);
+
+useEffect(() => {
+  if (session) {
+    fetchAllData();
+  }
+}, [session, fetchAllData]);
+
 
   useEffect(() => {
   if (session?.type === "sso" && session.store_id) {
@@ -670,7 +766,30 @@ const storeUrl = session?.store_url || user.store_url || "Store";
       onSelectOrder={handleSelectOrder}
     />
   );
+  
 }
+case "abandoned-carts":
+  return (
+    <AbandonedCarts
+      carts={abandonedCarts}
+      loading={abandonedCartsLoading}
+      error={abandonedCartsError}
+      onRefresh={loadAbandonedCarts}
+      onBack={() => setActiveTab("dashboard")}
+      onSelectCart={handleSelectAbandonedCart}
+    />
+  );
+  case "abandoned-cart-details":
+  return (
+    <AbandonedCartDetails
+      cart={selectedAbandonedCart}
+      loading={abandonedCartDetailLoading}
+      error={abandonedCartDetailError}
+      onBack={() => setActiveTab("abandoned-carts")}
+      onRefresh={refreshSelectedAbandonedCart}
+    />
+  );
+
 
       default:
         return null;

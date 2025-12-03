@@ -72,8 +72,11 @@ self.addEventListener('push', (event) => {
 
   const title = data.title || 'New notification';
   const body = data.body || '';
+
   const orderId = data.orderId;
   const storeId = data.storeId;
+  const cartId = data.cartId;
+  const type = data.type || 'order'; // 'order' | 'abandoned_cart' | etc
 
   const options = {
     body,
@@ -82,7 +85,9 @@ self.addEventListener('push', (event) => {
     data: {
       orderId,
       storeId,
-      url: '/', // you can change to a deep-link later
+      cartId,
+      type,
+      url: '/', // SPA root
     },
   };
 
@@ -93,23 +98,41 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
-  const urlToOpen = event.notification.data?.url || '/';
+  const data = event.notification.data || {};
+  const urlToOpen = data.url || '/';
 
   event.waitUntil(
-    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ('focus' in client) {
-          client.focus();
-          client.postMessage({
-            action: 'open-order',
-            orderId: event.notification.data?.orderId,
-          });
+    clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then((clientList) => {
+        const targetClient = clientList.length ? clientList[0] : null;
+
+        // Focus existing client if any
+        if (targetClient && 'focus' in targetClient) {
+          targetClient.focus();
+
+          // Tell the app what to do
+          if (data.type === 'abandoned_cart') {
+            targetClient.postMessage({
+              action: 'open-abandoned-cart',
+              cartId: data.cartId,
+              storeId: data.storeId,
+            });
+          } else if (data.orderId) {
+            targetClient.postMessage({
+              action: 'open-order',
+              orderId: data.orderId,
+              storeId: data.storeId,
+            });
+          }
+
           return;
         }
-      }
-      if (clients.openWindow) {
-        return clients.openWindow(urlToOpen);
-      }
-    })
+
+        // No existing client -> open new window
+        if (clients.openWindow) {
+          return clients.openWindow(urlToOpen);
+        }
+      })
   );
 });

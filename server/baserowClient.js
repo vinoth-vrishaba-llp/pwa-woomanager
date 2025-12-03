@@ -187,6 +187,23 @@ async function updateStoreCredentials(app_user_id, { store_url, consumer_key, co
   return updated;
 }
 
+// ---------- STORES LIST (for background jobs) ----------
+
+async function getAllStores() {
+  const qs = new URLSearchParams({
+    user_field_names: 'true',
+    size: 200, // adjust if you have more stores
+  });
+
+  const data = await baserowFetch(
+    `/database/rows/table/${STORE_TABLE_ID}/?${qs.toString()}`
+  );
+
+  const rows = Array.isArray(data.results) ? data.results : [];
+  return rows;
+}
+
+
 // ---------- WEBHOOKS ----------
 
 async function createWebhookRow({ store_id, webhook_id, topic, delivery_url, status }) {
@@ -253,6 +270,7 @@ module.exports = {
   findStoreByAppUserId,
   getStoreById,
   updateStoreRow,
+  getAllStores,
 
   // Webhooks & notifications
   createWebhookRow,

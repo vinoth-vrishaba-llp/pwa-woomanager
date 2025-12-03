@@ -252,7 +252,9 @@ const WooService = {
 // ------------------ ABANDONED CARTS ------------------
 // NOTE: wc-wcar plugin uses its own REST namespace: wc-wcar/v1
 
-WooService.getAbandonedCarts = async (config) => {
+WooService.getAbandonedCarts = async (config, useMock) => {
+  if (useMock) return [];
+
   const baseUrl = WooService.cleanUrl(config.url);
   const { key, secret } = config;
 
@@ -268,29 +270,44 @@ WooService.getAbandonedCarts = async (config) => {
 
   const data = await res.json();
 
-  // We don't know exact shape, so keep it generic but normalized
-  if (!Array.isArray(data)) return [];
+  // Plugin returns: { items: [...], total, page, per_page, total_pages }
+  const items = Array.isArray(data.items) ? data.items : [];
 
-  return data.map((c) => {
-    const items = c.items || c.line_items || c.cart || [];
-    const email =
-      c.email ||
-      c.customer_email ||
-      c.billing_email ||
-      (c.billing && c.billing.email) ||
-      null;
+  return items.map((c) => {
+    // list endpoint doesn't give line-items, it's just meta
+    const dateTime = c.dateTime || null;
+    let date_iso = null;
+    if (dateTime) {
+      const d = new Date(dateTime);
+      if (!Number.isNaN(d.getTime())) {
+        date_iso = d.toISOString();
+      }
+    }
 
     return {
       id: c.id,
-      email,
-      items,
-      items_count: Array.isArray(items) ? items.length : 0,
+      userName: c.userName || '',
+      email: c.email || null,
+      cartTotal: Number(c.cartTotal || 0),
+      orderStatus: c.orderStatus || '',
+      country: c.country || '',
+      dateTime,
+      date_iso,
+      unsubscribed: c.unsubscribed ?? 0,
+      // no items here – list endpoint usually doesn't have them
+      items: [],
+      items_count: 0,
       raw: c,
     };
   });
 };
 
-WooService.getAbandonedCartById = async (config, cartId) => {
+WooService.getAbandonedCartById = async (config, cartId, useMock) => {
+  if (useMock) {
+    // you can return null or some mock
+    return null;
+  }
+
   const baseUrl = WooService.cleanUrl(config.url);
   const { key, secret } = config;
 
@@ -318,9 +335,24 @@ WooService.getAbandonedCartById = async (config, cartId) => {
     (c.billing && c.billing.email) ||
     null;
 
+  const dateTime = c.dateTime || null;
+  let date_iso = null;
+  if (dateTime) {
+    const d = new Date(dateTime);
+    if (!Number.isNaN(d.getTime())) {
+      date_iso = d.toISOString();
+    }
+  }
+
   return {
     id: c.id,
+    userName: c.userName || '',
     email,
+    cartTotal: Number(c.cartTotal || 0),
+    orderStatus: c.orderStatus || '',
+    country: c.country || '',
+    dateTime,
+    date_iso,
     items,
     items_count: Array.isArray(items) ? items.length : 0,
     raw: c,
