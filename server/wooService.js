@@ -249,5 +249,83 @@ const WooService = {
     return response.json();
   },
 };
+// ------------------ ABANDONED CARTS ------------------
+// NOTE: wc-wcar plugin uses its own REST namespace: wc-wcar/v1
+
+WooService.getAbandonedCarts = async (config) => {
+  const baseUrl = WooService.cleanUrl(config.url);
+  const { key, secret } = config;
+
+  const url = `${baseUrl}/wp-json/wc-wcar/v1/abandoned-carts?consumer_key=${encodeURIComponent(
+    key
+  )}&consumer_secret=${encodeURIComponent(secret)}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Abandoned carts API error ${res.status}: ${text}`);
+  }
+
+  const data = await res.json();
+
+  // We don't know exact shape, so keep it generic but normalized
+  if (!Array.isArray(data)) return [];
+
+  return data.map((c) => {
+    const items = c.items || c.line_items || c.cart || [];
+    const email =
+      c.email ||
+      c.customer_email ||
+      c.billing_email ||
+      (c.billing && c.billing.email) ||
+      null;
+
+    return {
+      id: c.id,
+      email,
+      items,
+      items_count: Array.isArray(items) ? items.length : 0,
+      raw: c,
+    };
+  });
+};
+
+WooService.getAbandonedCartById = async (config, cartId) => {
+  const baseUrl = WooService.cleanUrl(config.url);
+  const { key, secret } = config;
+
+  const url = `${baseUrl}/wp-json/wc-wcar/v1/abandoned-carts/${encodeURIComponent(
+    cartId
+  )}?consumer_key=${encodeURIComponent(
+    key
+  )}&consumer_secret=${encodeURIComponent(secret)}`;
+
+  const res = await fetch(url);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(
+      `Abandoned cart detail API error ${res.status}: ${text}`
+    );
+  }
+
+  const c = await res.json();
+
+  const items = c.items || c.line_items || c.cart || [];
+  const email =
+    c.email ||
+    c.customer_email ||
+    c.billing_email ||
+    (c.billing && c.billing.email) ||
+    null;
+
+  return {
+    id: c.id,
+    email,
+    items,
+    items_count: Array.isArray(items) ? items.length : 0,
+    raw: c,
+  };
+};
+
 
 module.exports = WooService;
