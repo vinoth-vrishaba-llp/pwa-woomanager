@@ -187,28 +187,61 @@ async function checkAbandonedCartsForStore(storeId) {
       return;
     }
 
+    // 🔎 Only notify for carts within the last X minutes
+    const NOW = Date.now();
+    const THRESHOLD_MINUTES = 30; // tweak as you like (5, 10, 30, etc.)
+    const CUTOFF = NOW - THRESHOLD_MINUTES * 60 * 1000;
+
     for (const cart of carts) {
       if (!cart || !cart.id) continue;
-      if (seen.has(cart.id)) continue; // already notified
+
+      // ---- figure out created time from various shapes ----
+      let createdMs = NaN;
+
+      // if you later add normalized date on WooService side
+      if (cart.date_iso) {
+        createdMs = Date.parse(cart.date_iso);
+      } else if (cart.dateTime) {
+        createdMs = Date.parse(cart.dateTime);
+      } else if (cart.raw && cart.raw.dateTime) {
+        // current mapping: we kept original payload under cart.raw
+        createdMs = Date.parse(cart.raw.dateTime);
+      }
+
+      // 🧹 If no valid date OR it's older than threshold:
+      // mark as seen and NEVER notify (prevents old spam)
+      if (!Number.isFinite(createdMs) || createdMs < CUTOFF) {
+        seen.add(cart.id);
+        continue;
+      }
+
+      // Already notified this cart earlier
+      if (seen.has(cart.id)) continue;
 
       // Mark as seen BEFORE sending, to avoid duplicates on failures
       seen.add(cart.id);
 
-      const itemCount = cart.items_count || (Array.isArray(cart.items) ? cart.items.length : null);
-      const customerLabel = cart.email || 'Customer';
+      const itemCount =
+        cart.items_count ||
+        (Array.isArray(cart.items) ? cart.items.length : null);
+
+      const customerLabel =
+        cart.email ||
+        (cart.raw && cart.raw.userName) ||
+        "Customer";
 
       const bodyParts = [];
       bodyParts.push(`${customerLabel} left items in the cart`);
       if (itemCount != null) {
-        bodyParts.push(`${itemCount} item${itemCount === 1 ? '' : 's'}`);
+        bodyParts.push(`${itemCount} item${itemCount === 1 ? "" : "s"}`);
       }
 
-      const notificationBody = bodyParts.join(' • ');
+      const notificationBody = bodyParts.join(" • ");
 
       const notificationPayload = JSON.stringify({
-        title: 'Abandoned cart alert',
+        title: "Abandoned cart alert",
         body: notificationBody,
-        type: 'abandoned_cart',
+        type: "abandoned_cart",
         cartId: cart.id,
         storeId: sid,
       });
@@ -218,17 +251,17 @@ async function checkAbandonedCartsForStore(storeId) {
           .sendNotification(sub, notificationPayload)
           .catch((err) => {
             console.warn(
-              'Abandoned cart push send failed for one subscription:',
+              "Abandoned cart push send failed for one subscription:",
               err.statusCode || err.message
             );
             if (
               err.statusCode === 410 ||
               (err.body &&
                 err.body.includes &&
-                err.body.includes('410'))
+                err.body.includes("410"))
             ) {
               console.log(
-                '➡️ Subscription gone - consider pruning it for store',
+                "➡️ Subscription gone - consider pruning it for store",
                 sid
               );
             }
@@ -237,12 +270,13 @@ async function checkAbandonedCartsForStore(storeId) {
     }
   } catch (err) {
     console.error(
-      'Abandoned cart check failed for store',
+      "Abandoned cart check failed for store",
       storeId,
       err.message || err
     );
   }
 }
+
 
 /**
  * Poll all connected stores periodically for abandoned carts
