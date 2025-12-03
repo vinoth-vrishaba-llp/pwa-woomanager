@@ -231,40 +231,35 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
 
 // ✅ NEW: Fetch notifications for a store, with parsed Woo payload
 async function getNotificationsForStoreId(store_id) {
-  if (!store_id) return [];
-
-  const qs = new URLSearchParams({
-    user_field_names: 'true',
-    ['filter__store_id__equal']: store_id,
-    // optional: sort newest first
-    order_by: '-id',
-  });
-
-  const data = await baserowFetch(
-    `/database/rows/table/${NOTIF_TABLE_ID}/?${qs.toString()}`
-  );
-
-  const rows = Array.isArray(data.results) ? data.results : [];
-
-  return rows.map((row) => {
-    let payload = {};
-    try {
-      payload = row.payload ? JSON.parse(row.payload) : {};
-    } catch (e) {
-      console.warn('Failed to parse notification payload JSON for row', row.id);
+  try {
+    const tableId = process.env.BASEROW_NOTIFICATIONS_TABLE_ID;
+    
+    if (!tableId) {
+      throw new Error('BASEROW_NOTIFICATIONS_TABLE_ID not configured');
     }
 
-    return {
-      id: row.id,
-      store_id: row.store_id,
-      topic: row.topic,
-      resource: row.resource,
-      event: row.event,
-      payload,
-      // Baserow meta timestamp if you ever need it
-      created_on: row.created_on || row.created_at || null,
-    };
-  });
+    // ✅ Fixed: Use store_id (not storeId)
+    const url = `https://api.baserow.io/api/database/rows/table/${tableId}/?user_field_names=true&filter__store_id__link_row_contains=${store_id}&order_by=-id`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Token ${this.apiToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Baserow error ${response.status}: ${text}`);
+    }
+
+    const data = await response.json();
+    return data.results || [];
+  } catch (err) {
+    console.error('getNotificationsForStoreId error:', err);
+    throw err;
+  }
 }
 
 module.exports = {
