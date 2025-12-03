@@ -820,6 +820,53 @@ app.post('/api/push/subscribe', (req, res) => {
   }
 });
 
+// ------------------ NOTIFICATIONS (per store) ------------------
+app.get('/api/notifications/:storeId', async (req, res) => {
+  try {
+    const { storeId } = req.params;
+
+    const rows = await Baserow.getNotificationsForStoreId(Number(storeId));
+
+    const notifications = rows.map((row) => {
+      const payload = row.payload || {};
+
+      const customerName = payload.billing
+        ? `${payload.billing.first_name || ''} ${payload.billing.last_name || ''}`.trim()
+        : 'Customer';
+
+      return {
+        // This is what your <Notifications /> component expects
+        id: payload.id || row.id, // Woo order ID if present, fallback to row.id
+        customer: customerName || 'Customer',
+        total: parseFloat(payload.total || '0'),
+        status: payload.status || 'pending',
+        items: payload.line_items?.length || 0,
+
+        // 🔑 THE IMPORTANT PART:
+        // Use WooCommerce's local timestamp directly
+        date: payload.date_created || null,
+        date_created: payload.date_created || null,
+        date_created_gmt: payload.date_created_gmt || null,
+
+        topic: row.topic,
+        event: row.event,
+      };
+    });
+
+    // Optional: sort newest first by Woo date
+    notifications.sort((a, b) => {
+      if (!a.date || !b.date) return 0;
+      return new Date(b.date) - new Date(a.date);
+    });
+
+    res.json({ notifications });
+  } catch (err) {
+    console.error('Notifications API error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+
 // Orders
 app.post('/api/orders', async (req, res) => {
   try {

@@ -209,6 +209,8 @@ async function createWebhookRow({ store_id, webhook_id, topic, delivery_url, sta
 
 // ---------- NOTIFICATIONS ----------
 
+// ---------- NOTIFICATIONS ----------
+
 async function createNotificationRow({ store_id, topic, resource, event, payload }) {
   const record = {
     store_id,
@@ -227,19 +229,58 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
   return data;
 }
 
+// ✅ NEW: Fetch notifications for a store, with parsed Woo payload
+async function getNotificationsForStoreId(store_id) {
+  if (!store_id) return [];
+
+  const qs = new URLSearchParams({
+    user_field_names: 'true',
+    ['filter__store_id__equal']: store_id,
+    // optional: sort newest first
+    order_by: '-id',
+  });
+
+  const data = await baserowFetch(
+    `/database/rows/table/${NOTIF_TABLE_ID}/?${qs.toString()}`
+  );
+
+  const rows = Array.isArray(data.results) ? data.results : [];
+
+  return rows.map((row) => {
+    let payload = {};
+    try {
+      payload = row.payload ? JSON.parse(row.payload) : {};
+    } catch (e) {
+      console.warn('Failed to parse notification payload JSON for row', row.id);
+    }
+
+    return {
+      id: row.id,
+      store_id: row.store_id,
+      topic: row.topic,
+      resource: row.resource,
+      event: row.event,
+      payload,
+      // Baserow meta timestamp if you ever need it
+      created_on: row.created_on || row.created_at || null,
+    };
+  });
+}
+
 module.exports = {
   // User auth
   createUser,
   authenticateUser,
   findUserByUsername,
-  
+
   // Store management
   updateStoreCredentials,
   findStoreByAppUserId,
   getStoreById,
   updateStoreRow,
-  
+
   // Webhooks & notifications
   createWebhookRow,
   createNotificationRow,
+  getNotificationsForStoreId,   // ✅ export this
 };

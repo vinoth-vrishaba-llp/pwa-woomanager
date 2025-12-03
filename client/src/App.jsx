@@ -25,7 +25,9 @@ import RazorpayConnectView from "./components/RazorpayConnectView";
 
 
 // 🔹 import API helper
-import { fetchRazorpayPayment } from "./services/api";
+// 🔹 import API helpers
+import { fetchRazorpayPayment, fetchNotifications } from "./services/api";
+
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const VAPID_PUBLIC_KEY = import.meta.env.VITE_VAPID_PUBLIC_KEY;
@@ -83,6 +85,9 @@ const App = () => {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [notificationsSeenAt, setNotificationsSeenAt] = useState(null);
   const [serverTimeIso, setServerTimeIso] = useState(null);
+  const [notifications, setNotifications] = useState([]);
+const [notificationsLoading, setNotificationsLoading] = useState(false);
+const [notificationsError, setNotificationsError] = useState(null);
 
   // 🔹 Razorpay payment for the selected order
   const [razorpayPayment, setRazorpayPayment] = useState(null);
@@ -91,6 +96,15 @@ const App = () => {
   // ---- route: /sso-complete handled separately ----
   const path = window.location.pathname;
 const hash = window.location.hash || "";
+
+const getNotificationsSeenKey = (session) => {
+  if (session?.type === "sso" && session.store_id) {
+    return `woo_manager_notifications_seen_at_store_${session.store_id}`;
+  }
+  // fallback for demo/manual
+  return "woo_manager_notifications_seen_at_default";
+};
+
 
 // Hash-based SSO route (production)
 if (hash.startsWith("#/sso-complete")) {
@@ -170,6 +184,16 @@ if (path.startsWith("/sso-complete")) {
     fetchServerTime();
   }, []);
 
+  useEffect(() => {
+  if (!session) return;
+  const key = getNotificationsSeenKey(session);
+  const saved = localStorage.getItem(key);
+  if (saved) {
+    setNotificationsSeenAt(saved);
+  }
+}, [session]);
+
+
   // ✅ NEW: Auth success handler
 const handleAuthSuccess = (userData, authToken) => {
   setUser(userData);
@@ -235,21 +259,28 @@ const handleRazorpayConnected = ({ store_id }) => {
 
   // ✅ UPDATED: Logout handler
   const handleLogout = () => {
-    setUser(null);
-    setToken(null);
-    setSession(null);
-    setData({ orders: [], products: [], customers: [] });
-    setSalesReport(null);
-    setError(null);
-    setActiveTab("dashboard");
-    setSelectedOrder(null);
-    setSelectedCustomer(null);
-    setNotificationsSeenAt(null);
-    localStorage.removeItem("woo_manager_token");
-    localStorage.removeItem("woo_manager_user");
-    localStorage.removeItem("woo_manager_store");
-    localStorage.removeItem("woo_manager_config");
-  };
+  const keyCurrent = getNotificationsSeenKey(session);
+  if (keyCurrent) {
+    localStorage.removeItem(keyCurrent);
+  }
+  localStorage.removeItem("woo_manager_notifications_seen_at_default");
+
+  setUser(null);
+  setToken(null);
+  setSession(null);
+  setData({ orders: [], products: [], customers: [] });
+  setSalesReport(null);
+  setError(null);
+  setActiveTab("dashboard");
+  setSelectedOrder(null);
+  setSelectedCustomer(null);
+  setNotificationsSeenAt(null);
+  localStorage.removeItem("woo_manager_token");
+  localStorage.removeItem("woo_manager_user");
+  localStorage.removeItem("woo_manager_store");
+  localStorage.removeItem("woo_manager_config");
+};
+
 
   // -------- Fetch everything via /api/bootstrap --------
   const fetchAllData = useCallback(async () => {
@@ -301,6 +332,25 @@ const handleRazorpayConnected = ({ store_id }) => {
       setLoading(false);
     }
   }, [session]);
+
+  const loadNotifications = useCallback(async () => {
+  // Only meaningful for SSO stores (where we have a store_id)
+  if (!session || session.type !== "sso" || !session.store_id) return;
+
+  setNotificationsLoading(true);
+  setNotificationsError(null);
+
+  try {
+    const list = await fetchNotifications(session.store_id);
+    setNotifications(Array.isArray(list) ? list : []);
+  } catch (err) {
+    console.error("Notifications fetch failed:", err);
+    setNotificationsError(err.message || "Failed to fetch notifications");
+  } finally {
+    setNotificationsLoading(false);
+  }
+}, [session]);
+
 
     const subscribeToPush = useCallback(
     async (storeId) => {
@@ -367,6 +417,13 @@ useEffect(() => {
     }
   }, [session, fetchAllData]);
 
+  useEffect(() => {
+  if (session?.type === "sso" && session.store_id) {
+    loadNotifications();
+  }
+}, [session, loadNotifications]);
+
+
   // -------- Selection handlers --------
   const handleSelectOrder = async (order) => {
   setSelectedOrder(order);
@@ -406,9 +463,21 @@ useEffect(() => {
   };
 
   const handleOpenNotifications = () => {
-    setNotificationsSeenAt(new Date().toISOString());
-    setActiveTab("notifications");
-  };
+  const iso = new Date().toISOString();
+  setNotificationsSeenAt(iso);
+
+  const key = getNotificationsSeenKey(session);
+  if (key) {
+    localStorage.setItem(key, iso);
+  }
+
+  if (session?.type === "sso" && session.store_id) {
+    loadNotifications(); // from earlier fix
+  }
+
+  setActiveTab("notifications");
+};
+
 
   // -------- Derived notifications (last 24h orders) --------
   const derivedNotifications = useMemo(() => {
@@ -430,19 +499,29 @@ useEffect(() => {
   }, [data.orders]);
 
   const notificationsCount = useMemo(() => {
-    if (!derivedNotifications.length) return 0;
-    if (!notificationsSeenAt) return derivedNotifications.length;
+  const isSSO = session?.type === "sso";
+  const baseList = isSSO ? notifications : derivedNotifications;
 
-    const seenTs = new Date(notificationsSeenAt).getTime();
-    if (!Number.isFinite(seenTs)) return derivedNotifications.length;
+  if (!baseList.length) return 0;
+  if (!notificationsSeenAt) return baseList.length;
 
-    return derivedNotifications.filter((n) => {
-      if (!n.date) return false;
-      const t = new Date(n.date).getTime();
-      if (!Number.isFinite(t)) return false;
-      return t > seenTs;
-    }).length;
-  }, [derivedNotifications, notificationsSeenAt]);
+  const seenTs = new Date(notificationsSeenAt).getTime();
+  if (!Number.isFinite(seenTs)) return baseList.length;
+
+  return baseList.filter((n) => {
+    const raw =
+      n.date ||
+      n.date_created ||
+      n.date_created_gmt ||
+      null;
+
+    if (!raw) return false;
+    const t = new Date(raw).getTime();
+    if (!Number.isFinite(t)) return false;
+    return t > seenTs;
+  }).length;
+}, [session, notifications, derivedNotifications, notificationsSeenAt]);
+
 
   // ✅ NEW: Auth loading state
   if (authLoading) {
@@ -573,17 +652,26 @@ const storeUrl = session?.store_url || user.store_url || "Store";
             razorpayPayment={razorpayPayment}
           />
         );
-      case "notifications":
-        return (
-          <Notifications
-            notifications={derivedNotifications}
-            loading={loading}
-            error={error}
-            onRefresh={fetchAllData}
-            onLogout={handleLogout}
-            onSelectOrder={handleSelectOrder}
-          />
-        );
+    case "notifications": {
+  const isSSO = session?.type === "sso";
+
+  const notificationsSource = isSSO ? notifications : derivedNotifications;
+  const notificationsLoadingState = isSSO ? notificationsLoading : loading;
+  const notificationsErrorState = isSSO ? notificationsError : error;
+  const onRefreshNotifications = isSSO ? loadNotifications : fetchAllData;
+
+  return (
+    <Notifications
+      notifications={notificationsSource}
+      loading={notificationsLoadingState}
+      error={notificationsErrorState}
+      onRefresh={onRefreshNotifications}
+      onLogout={handleLogout}
+      onSelectOrder={handleSelectOrder}
+    />
+  );
+}
+
       default:
         return null;
     }

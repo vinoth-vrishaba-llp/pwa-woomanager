@@ -11,6 +11,13 @@ export async function testConnection(config) {
   return data;
 }
 
+export async function fetchNotifications(storeId) {
+  const res = await fetch(`${API_BASE}/api/notifications/${storeId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch notifications');
+  return data.notifications || [];
+}
+
 export async function fetchOrders(config) {
   const res = await fetch(`${API_BASE}/api/orders`, {
     method: 'POST',
