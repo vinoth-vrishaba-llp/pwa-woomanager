@@ -232,29 +232,11 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
 // ✅ NEW: Fetch notifications for a store, with parsed Woo payload
 async function getNotificationsForStoreId(store_id) {
   try {
-    const tableId = process.env.BASEROW_NOTIFICATIONS_TABLE_ID;
+    // ✅ Use link_row_contains filter for the linked store_id field
+    const data = await baserowFetch(
+      `/database/rows/table/${NOTIF_TABLE_ID}/?user_field_names=true&filter__store_id__link_row_contains=${store_id}&order_by=-id`
+    );
     
-    if (!tableId) {
-      throw new Error('BASEROW_NOTIFICATIONS_TABLE_ID not configured');
-    }
-
-    // ✅ Fixed: Use store_id (not storeId)
-    const url = `https://api.baserow.io/api/database/rows/table/${tableId}/?user_field_names=true&filter__store_id__link_row_contains=${store_id}&order_by=-id`;
-
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Token ${this.apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Baserow error ${response.status}: ${text}`);
-    }
-
-    const data = await response.json();
     return data.results || [];
   } catch (err) {
     console.error('getNotificationsForStoreId error:', err);
