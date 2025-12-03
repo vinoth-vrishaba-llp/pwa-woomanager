@@ -7,6 +7,7 @@ import {
   BarChart2,
   Settings,
   Loader,
+  OctagonX,
 } from "lucide-react";
 
 import AuthView from "./components/AuthView";
@@ -921,7 +922,7 @@ case "abandoned-carts":
         : "text-gray-400 hover:text-gray-600"
     }`}
   >
-    <Package
+    <OctagonX
       size={24}
       strokeWidth={
         activeTab === "abandoned-carts" ||

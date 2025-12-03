@@ -582,17 +582,6 @@ const Analytics = ({
             </>
           )}
         </div>
-
-        {/* Footer link */}
-        <div className="flex justify-end items-center border-t border-gray-100 mt-6 pt-3">
-          <button
-            type="button"
-            className="inline-flex items-center text-xs font-medium text-purple-600 hover:text-purple-700"
-          >
-            Sales Report
-            <span className="ml-1 text-sm">→</span>
-          </button>
-        </div>
       </div>
     </div>
   );
