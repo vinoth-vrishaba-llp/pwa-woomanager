@@ -25,7 +25,7 @@ import RazorpayConnectView from "./components/RazorpayConnectView";
 import AbandonedCarts from "./components/AbandonedCarts";
 import AbandonedCartDetails from "./components/AbandonedCartDetails";
 
-import { fetchRazorpayPayment, fetchAbandonedCarts, fetchAbandonedCart } from "./services/api";
+import { fetchRazorpayPayment, fetchNotifications, fetchAbandonedCarts, fetchAbandonedCart } from "./services/api";
 
 
 
@@ -655,28 +655,34 @@ if (user.has_store_connected && !user.has_razorpay_connected) {
 // 4. Both Woo + Razorpay connected -> app shell / dashboard
 const storeUrl = session?.store_url || user.store_url || "Store";
 
-
+const newAbandonedCount = Array.isArray(abandonedCarts)
+  ? abandonedCarts.length
+  : 0;
   // -------- Screen switch --------
   const renderContent = () => {
     switch (activeTab) {
       case "dashboard":
-        return (
-          <Dashboard
-            navigate={setActiveTab}
-            data={data}
-            loading={loading}
-            error={error}
-            onRefresh={fetchAllData}
-            config={{
-              url: storeUrl,
-              useMock: session?.type === "manual" && session.config.useMock,
-            }}
-            salesReport={salesReport}
-            notificationsCount={notificationsCount}
-            onSelectOrder={handleSelectOrder}
-            onOpenNotifications={handleOpenNotifications}
-          />
-        );
+  return (
+    <Dashboard
+      navigate={setActiveTab}
+      data={data}
+      loading={loading}
+      error={error}
+      onRefresh={fetchAllData}
+      config={{
+        url: storeUrl,
+        useMock: session?.type === "manual" && session.config.useMock,
+      }}
+      salesReport={salesReport}
+      notificationsCount={notificationsCount}
+      onSelectOrder={handleSelectOrder}
+      onOpenNotifications={handleOpenNotifications}
+      // 👇 NEW
+      abandonedCarts={abandonedCarts}
+      newAbandonedCount={newAbandonedCount}
+      onOpenAbandoned={() => setActiveTab("abandoned-carts")}
+    />
+  );
       case "orders":
         return (
           <OrdersList
@@ -803,21 +809,33 @@ case "abandoned-carts":
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
       {/* ✅ New version banner */}
-      {updateReady && (
-        <div className="fixed bottom-16 inset-x-0 max-w-md mx-auto px-4 z-50">
-          <div className="bg-purple-700 text-white rounded-xl px-4 py-3 flex items-center justify-between shadow-lg">
-            <span className="text-xs font-medium">
-              New version of WooManager is available.
-            </span>
-            <button
-              className="ml-3 text-xs font-semibold bg-white text-purple-700 px-3 py-1 rounded-lg"
-              onClick={() => window.location.reload()}
-            >
-              Reload
-            </button>
-          </div>
-        </div>
-      )}
+     {updateReady && (
+  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+    <div className="bg-white rounded-2xl px-5 py-4 max-w-xs w-[90%] shadow-2xl border border-purple-100">
+      <div className="text-sm font-semibold text-gray-900 mb-2">
+        New version available
+      </div>
+      <p className="text-xs text-gray-600 mb-4">
+        A new version of WooManager is ready. Reload to get the latest features and fixes.
+      </p>
+      <div className="flex justify-end gap-2">
+        <button
+          className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600"
+          onClick={() => setUpdateReady(false)}
+        >
+          Later
+        </button>
+        <button
+          className="text-xs px-3 py-1 rounded-lg bg-purple-700 text-white font-semibold"
+          onClick={() => window.location.reload()}
+        >
+          Reload now
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+
 
       {activeTab !== "order-details" && activeTab !== "customer-details" && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
@@ -828,85 +846,110 @@ case "abandoned-carts":
       {activeTab !== "order-details" && activeTab !== "customer-details" && (
         <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
           <div className="flex justify-around items-center px-2 py-3">
-            <button
-              onClick={() => setActiveTab("dashboard")}
-              className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === "dashboard"
-                  ? "text-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <Home
-                size={24}
-                strokeWidth={activeTab === "dashboard" ? 2.5 : 2}
-              />
-              <span className="text-[10px] mt-1 font-medium">Home</span>
-            </button>
+  <button
+    onClick={() => setActiveTab("dashboard")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "dashboard"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <Home
+      size={24}
+      strokeWidth={activeTab === "dashboard" ? 2.5 : 2}
+    />
+    <span className="text-[10px] mt-1 font-medium">Home</span>
+  </button>
 
-            <button
-              onClick={() => setActiveTab("orders")}
-              className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === "orders" || activeTab === "order-details"
-                  ? "text-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <ShoppingBag
-                size={24}
-                strokeWidth={
-                  activeTab === "orders" || activeTab === "order-details"
-                    ? 2.5
-                    : 2
-                }
-              />
-              <span className="text-[10px] mt-1 font-medium">Orders</span>
-            </button>
+  <button
+    onClick={() => setActiveTab("orders")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "orders" || activeTab === "order-details"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <ShoppingBag
+      size={24}
+      strokeWidth={
+        activeTab === "orders" || activeTab === "order-details"
+          ? 2.5
+          : 2
+      }
+    />
+    <span className="text-[10px] mt-1 font-medium">Orders</span>
+  </button>
 
-            <button
-              onClick={() => setActiveTab("products")}
-              className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === "products"
-                  ? "text-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <Package
-                size={24}
-                strokeWidth={activeTab === "products" ? 2.5 : 2}
-              />
-              <span className="text-[10px] mt-1 font-medium">Products</span>
-            </button>
+  {/* 🔥 New: Abandoned tab */}
+  <button
+    onClick={() => setActiveTab("abandoned-carts")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "abandoned-carts" ||
+      activeTab === "abandoned-cart-details"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <Package
+      size={24}
+      strokeWidth={
+        activeTab === "abandoned-carts" ||
+        activeTab === "abandoned-cart-details"
+          ? 2.5
+          : 2
+      }
+    />
+    <span className="text-[10px] mt-1 font-medium text-center">
+      Abandoned
+    </span>
+  </button>
 
-            <button
-              onClick={() => setActiveTab("analytics")}
-              className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === "analytics"
-                  ? "text-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <BarChart2
-                size={24}
-                strokeWidth={activeTab === "analytics" ? 2.5 : 2}
-              />
-              <span className="text-[10px] mt-1 font-medium">Stats</span>
-            </button>
+  <button
+    onClick={() => setActiveTab("products")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "products"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <Package
+      size={24}
+      strokeWidth={activeTab === "products" ? 2.5 : 2}
+    />
+    <span className="text-[10px] mt-1 font-medium">Products</span>
+  </button>
 
-            <button
-              onClick={() => setActiveTab("settings")}
-              className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
-                activeTab === "settings"
-                  ? "text-purple-600"
-                  : "text-gray-400 hover:text-gray-600"
-              }`}
-            >
-              <Settings
-                size={24}
-                strokeWidth={activeTab === "settings" ? 2.5 : 2}
-              />
-              <span className="text-[10px] mt-1 font-medium">Store</span>
-            </button>
-          </div>
+  <button
+    onClick={() => setActiveTab("analytics")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "analytics"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <BarChart2
+      size={24}
+      strokeWidth={activeTab === "analytics" ? 2.5 : 2}
+    />
+    <span className="text-[10px] mt-1 font-medium">Stats</span>
+  </button>
+
+  <button
+    onClick={() => setActiveTab("settings")}
+    className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${
+      activeTab === "settings"
+        ? "text-purple-600"
+        : "text-gray-400 hover:text-gray-600"
+    }`}
+  >
+    <Settings
+      size={24}
+      strokeWidth={activeTab === "settings" ? 2.5 : 2}
+    />
+    <span className="text-[10px] mt-1 font-medium">Store</span>
+  </button>
+</div>
+
         </nav>
       )}
 

@@ -8,7 +8,9 @@ import {
   IndianRupee,
   Users,
   Box,
+  Clock,        // 👈 add this
 } from "lucide-react";
+
 import StatusBadge from "./ui/StatusBadge";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
@@ -23,12 +25,19 @@ const Dashboard = ({
   salesReport,
   notificationsCount = 0,
   onSelectOrder,
-  onOpenNotifications, // NEW
+  onOpenNotifications,
+  // 👇 NEW
+  abandonedCarts = [],
+  newAbandonedCount = 0,
+  onOpenAbandoned,
 }) => {
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} onRetry={onRefresh} />;
 
   const orders = Array.isArray(data.orders) ? data.orders : [];
+
+  const hasNewAbandoned = (newAbandonedCount || 0) > 0;
 
   // ---- Normalize salesReport: handle array or single object ----
   const reportSummary = salesReport
@@ -88,6 +97,20 @@ const Dashboard = ({
             <p className="text-purple-200 text-xs truncate max-w-[220px]">
               {config.useMock ? "Demo Store" : config.url}
             </p>
+
+             {hasNewAbandoned && (
+        <button
+          type="button"
+          onClick={onOpenAbandoned}
+          className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100/90 text-amber-800 text-[10px] font-semibold border border-amber-200 shadow-sm active:scale-95 transition"
+        >
+          <Clock size={12} className="shrink-0" />
+          <span>
+            {newAbandonedCount} abandoned cart
+            {newAbandonedCount > 1 ? "s" : ""}
+          </span>
+        </button>
+      )}
           </div>
           <div className="flex gap-2">
             <button
@@ -158,37 +181,53 @@ const Dashboard = ({
         <h3 className="text-gray-800 font-bold mb-3 text-sm uppercase tracking-wide">
           Quick Actions
         </h3>
-        <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-          <button
-            onClick={() => navigate("products")}
-            className="flex flex-col items-center min-w-[80px] gap-2 group"
-          >
-            <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
-              <Box size={22} />
-            </div>
-            <span className="text-xs font-medium text-gray-600">Products</span>
-          </button>
-          <button
-            onClick={() => navigate("orders")}
-            className="flex flex-col items-center min-w-[80px] gap-2 group"
-          >
-            <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
-              <ShoppingBag size={22} />
-            </div>
-            <span className="text-xs font-medium text-gray-600">
-              View Orders
-            </span>
-          </button>
-          <button
-            onClick={() => navigate("customers")}
-            className="flex flex-col items-center min-w-[80px] gap-2 group"
-          >
-            <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
-              <Users size={22} />
-            </div>
-            <span className="text-xs font-medium text-gray-600">Customers</span>
-          </button>
-        </div>
+       <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+  <button
+    onClick={() => navigate("products")}
+    className="flex flex-col items-center min-w-[80px] gap-2 group"
+  >
+    <div className="w-14 h-14 bg-purple-100 text-purple-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
+      <Box size={22} />
+    </div>
+    <span className="text-xs font-medium text-gray-600">Products</span>
+  </button>
+
+  <button
+    onClick={() => navigate("orders")}
+    className="flex flex-col items-center min-w-[80px] gap-2 group"
+  >
+    <div className="w-14 h-14 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
+      <ShoppingBag size={22} />
+    </div>
+    <span className="text-xs font-medium text-gray-600">
+      View Orders
+    </span>
+  </button>
+
+  <button
+    onClick={() => navigate("customers")}
+    className="flex flex-col items-center min-w-[80px] gap-2 group"
+  >
+    <div className="w-14 h-14 bg-green-100 text-green-600 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
+      <Users size={22} />
+    </div>
+    <span className="text-xs font-medium text-gray-600">Customers</span>
+  </button>
+
+  {/* 🔥 New: Abandoned Carts quick action */}
+  <button
+    onClick={() => navigate("abandoned-carts")}
+    className="flex flex-col items-center min-w-[100px] gap-2 group"
+  >
+    <div className="w-14 h-14 bg-amber-100 text-amber-700 rounded-full flex items-center justify-center shadow-sm group-active:scale-95 transition">
+      <Package size={22} />
+    </div>
+    <span className="text-xs font-medium text-gray-600 text-center">
+      Abandoned Carts
+    </span>
+  </button>
+</div>
+
       </div>
 
       {/* Last 7 days orders */}
