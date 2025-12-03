@@ -232,9 +232,8 @@ async function createNotificationRow({ store_id, topic, resource, event, payload
 // ✅ NEW: Fetch notifications for a store, with parsed Woo payload
 async function getNotificationsForStoreId(store_id) {
   try {
-    // ✅ Use link_row_contains filter for the linked store_id field
     const data = await baserowFetch(
-      `/database/rows/table/${NOTIF_TABLE_ID}/?user_field_names=true&filter__store_id__link_row_contains=${store_id}&order_by=-id`
+      `/database/rows/table/${NOTIF_TABLE_ID}/?user_field_names=true&filter__store_id__link_row_contains=${store_id}`
     );
     
     return data.results || [];
@@ -243,7 +242,6 @@ async function getNotificationsForStoreId(store_id) {
     throw err;
   }
 }
-
 module.exports = {
   // User auth
   createUser,
