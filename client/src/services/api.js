@@ -59,3 +59,27 @@ export async function fetchRazorpayPayment(transaction_id, store_id) {
   const json = await res.json();
   return json.payment;
 }
+
+export async function fetchAbandonedCarts(storeId) {
+  const res = await fetch(`${API_BASE}/api/abandoned-carts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ store_id: storeId }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch abandoned carts');
+  return data.carts || [];
+}
+
+export async function fetchAbandonedCart(storeId, cartId) {
+  const res = await fetch(`${API_BASE}/api/abandoned-carts/${cartId}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ store_id: storeId }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch abandoned cart');
+  return data.cart;
+}
