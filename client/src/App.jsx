@@ -89,6 +89,11 @@ const App = () => {
 const [notificationsLoading, setNotificationsLoading] = useState(false);
 const [notificationsError, setNotificationsError] = useState(null);
 
+// 👇 ADD THESE
+const [abandonedCarts, setAbandonedCarts] = useState([]);
+const [abandonedCartsLoading, setAbandonedCartsLoading] = useState(false);
+const [abandonedCartsError, setAbandonedCartsError] = useState(null);
+
 const [selectedAbandonedCart, setSelectedAbandonedCart] = useState(null);
 const [abandonedCartDetailLoading, setAbandonedCartDetailLoading] = useState(false);
 const [abandonedCartDetailError, setAbandonedCartDetailError] = useState(null);
@@ -364,6 +369,8 @@ const refreshSelectedAbandonedCart = async () => {
         products: json.products || [],
         customers: json.customers || [],
       });
+      // 👇 NEW: store abandoned carts from bootstrap
+setAbandonedCarts(json.abandoned_carts || []);
 
       setSalesReport(json.report || null);
     } catch (err) {
@@ -401,6 +408,30 @@ const refreshSelectedAbandonedCart = async () => {
   }
 }, [session]);
 
+const loadAbandonedCarts = useCallback(async () => {
+  if (!session || session.type !== "sso" || !session.store_id) return;
+
+  setAbandonedCartsLoading(true);
+  setAbandonedCartsError(null);
+
+  try {
+    const res = await fetchAbandonedCarts(session.store_id);
+    // assuming your api returns { carts: [...] }
+    const carts = res?.carts || res || [];
+    setAbandonedCarts(Array.isArray(carts) ? carts : []);
+  } catch (err) {
+    console.error("Abandoned carts fetch failed:", err);
+    setAbandonedCartsError(err.message || "Failed to fetch abandoned carts");
+  } finally {
+    setAbandonedCartsLoading(false);
+  }
+}, [session]);
+
+useEffect(() => {
+  if (session?.type === "sso" && session.store_id) {
+    loadAbandonedCarts();
+  }
+}, [session, loadAbandonedCarts]);
 
     const subscribeToPush = useCallback(
     async (storeId) => {
