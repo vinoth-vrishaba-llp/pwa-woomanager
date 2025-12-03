@@ -9,6 +9,7 @@ import {
   Users,
   Box,
   Clock,
+  OctagonX,
 } from "lucide-react";
 
 import StatusBadge from "./ui/StatusBadge";
@@ -131,7 +132,7 @@ const Dashboard = ({
                 onClick={onOpenAbandoned}
                 className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-amber-100/90 text-amber-800 text-[10px] font-semibold border border-amber-200 shadow-sm active:scale-95 transition"
               >
-                <Clock size={12} className="shrink-0" />
+                <OctagonX size={12} className="shrink-0" />
                 <span>
                   {newAbandonedCount} abandoned cart
                   {newAbandonedCount > 1 ? "s" : ""}
