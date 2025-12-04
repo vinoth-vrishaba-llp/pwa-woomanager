@@ -1,13 +1,14 @@
-import React, { useMemo, useState } from 'react';
+// client/src/components/ProductsList.jsx
+import React, { useMemo, useState } from "react";
 import {
   RefreshCw,
   Plus,
   Search,
   SlidersHorizontal,
   X,
-} from 'lucide-react';
-import StatusBadge from './ui/StatusBadge';
-import ErrorState from './ui/ErrorState';
+} from "lucide-react";
+import StatusBadge from "./ui/StatusBadge";
+import ErrorState from "./ui/ErrorState";
 
 const ProductsList = ({
   products,
@@ -15,19 +16,26 @@ const ProductsList = ({
   error,
   onRefresh,
   onLogout,
-  page = 1,          // 🔹 NEW
-  totalPages = 1,    // 🔹 NEW
-  onPageChange,      // 🔹 NEW
+  page = 1,          // 🔹 current page
+  totalPages = 1,    // 🔹 total pages (from API)
+  onPageChange,      // 🔹 function (nextPage) => void
 }) => {
-  const [statusFilter, setStatusFilter] = useState('all'); // all | publish | draft
-  const [selectedCategoryId, setSelectedCategoryId] = useState('all');
-  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState("all"); // all | publish | draft
+  const [selectedCategoryId, setSelectedCategoryId] = useState("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   // drawer animation state
   const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
   const [isCategorySheetVisible, setIsCategorySheetVisible] = useState(false);
 
   const SKELETON_ITEMS = Array.from({ length: 6 });
+
+  // 🔹 Normalize products so we NEVER crash if shape changes
+  const safeProducts = useMemo(() => {
+    if (Array.isArray(products)) return products;
+    if (products && Array.isArray(products.products)) return products.products;
+    return [];
+  }, [products]);
 
   const handleImageError = (e) => {
     e.target.onerror = null;
@@ -40,24 +48,24 @@ const ProductsList = ({
     let published = 0;
     let draft = 0;
 
-    products.forEach((p) => {
+    safeProducts.forEach((p) => {
       const status = p.post_status || p.status;
-      if (status === 'publish') published += 1;
-      if (status === 'draft') draft += 1;
+      if (status === "publish") published += 1;
+      if (status === "draft") draft += 1;
     });
 
     return {
-      totalCount: products.length,
+      totalCount: safeProducts.length,
       publishedCount: published,
       draftCount: draft,
     };
-  }, [products]);
+  }, [safeProducts]);
 
   // categories with per-category product counts (on current page)
   const categories = useMemo(() => {
     const map = new Map();
 
-    products.forEach((p) => {
+    safeProducts.forEach((p) => {
       if (Array.isArray(p.categories)) {
         p.categories.forEach((cat) => {
           if (cat && cat.id != null) {
@@ -76,15 +84,15 @@ const ProductsList = ({
     });
 
     return Array.from(map.values()).sort((a, b) =>
-      a.name.localeCompare(b.name),
+      a.name.localeCompare(b.name)
     );
-  }, [products]);
+  }, [safeProducts]);
 
   const filteredProducts = useMemo(() => {
-    let result = [...products];
+    let result = [...safeProducts];
 
     // Status filter
-    if (statusFilter !== 'all') {
+    if (statusFilter !== "all") {
       result = result.filter((p) => {
         const status = p.post_status || p.status;
         return status === statusFilter;
@@ -92,27 +100,27 @@ const ProductsList = ({
     }
 
     // Category filter
-    if (selectedCategoryId !== 'all') {
+    if (selectedCategoryId !== "all") {
       const catId = Number(selectedCategoryId);
       result = result.filter(
         (p) =>
           Array.isArray(p.categories) &&
-          p.categories.some((c) => Number(c.id) === catId),
+          p.categories.some((c) => Number(c.id) === catId)
       );
     }
 
     // Search filter
-    if (searchQuery.trim() !== '') {
+    if (searchQuery.trim() !== "") {
       const q = searchQuery.trim().toLowerCase();
       result = result.filter((p) => {
-        const name = p.name?.toLowerCase() || '';
-        const sku = p.sku?.toLowerCase() || '';
+        const name = p.name?.toLowerCase() || "";
+        const sku = p.sku?.toLowerCase() || "";
         return name.includes(q) || sku.includes(q);
       });
     }
 
     return result;
-  }, [products, statusFilter, selectedCategoryId, searchQuery]);
+  }, [safeProducts, statusFilter, selectedCategoryId, searchQuery]);
 
   // ---- Pagination handlers ----
 
@@ -177,7 +185,7 @@ const ProductsList = ({
             </div>
             <div className="flex justify-between items-end mt-2">
               <div className="text-sm text-gray-500">
-                Stock{' '}
+                Stock{" "}
                 <span className="font-medium text-gray-800">
                   {product.stock}
                 </span>
@@ -213,13 +221,13 @@ const ProductsList = ({
     <>
       <button
         onClick={() => {
-          setSelectedCategoryId('all');
+          setSelectedCategoryId("all");
           closeDrawer && closeDrawer();
         }}
         className={`w-full px-2 py-2 rounded-lg text-left text-sm flex justify-between items-center ${
-          selectedCategoryId === 'all'
-            ? 'bg-purple-100 text-purple-700 font-semibold'
-            : 'text-gray-700 hover:bg-gray-50'
+          selectedCategoryId === "all"
+            ? "bg-purple-100 text-purple-700 font-semibold"
+            : "text-gray-700 hover:bg-gray-50"
         }`}
       >
         <span>All Categories</span>
@@ -235,8 +243,8 @@ const ProductsList = ({
           }}
           className={`w-full px-2 py-2 rounded-lg text-left text-sm flex justify-between items-center truncate ${
             selectedCategoryId === cat.id
-              ? 'bg-purple-100 text-purple-700 font-semibold'
-              : 'text-gray-700 hover:bg-gray-50'
+              ? "bg-purple-100 text-purple-700 font-semibold"
+              : "text-gray-700 hover:bg-gray-50"
           }`}
         >
           <span className="truncate">{cat.name}</span>
@@ -266,7 +274,7 @@ const ProductsList = ({
           >
             <RefreshCw
               size={20}
-              className={`text-gray-600 ${loading ? 'animate-spin' : ''}`}
+              className={`text-gray-600 ${loading ? "animate-spin" : ""}`}
             />
           </button>
           <button className="p-2 bg-purple-100 text-purple-700 rounded-full hover:bg-purple-200 active:scale-95 transition">
@@ -306,31 +314,31 @@ const ProductsList = ({
         {/* Status Filter Pills */}
         <div className="flex gap-2 overflow-x-auto no-scrollbar">
           <button
-            onClick={() => setStatusFilter('all')}
+            onClick={() => setStatusFilter("all")}
             className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border ${
-              statusFilter === 'all'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-600 border-gray-200'
+              statusFilter === "all"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-600 border-gray-200"
             }`}
           >
             All ({totalCount})
           </button>
           <button
-            onClick={() => setStatusFilter('publish')}
+            onClick={() => setStatusFilter("publish")}
             className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border ${
-              statusFilter === 'publish'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-600 border-gray-200'
+              statusFilter === "publish"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-600 border-gray-200"
             }`}
           >
             Published ({publishedCount})
           </button>
           <button
-            onClick={() => setStatusFilter('draft')}
+            onClick={() => setStatusFilter("draft")}
             className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap border ${
-              statusFilter === 'draft'
-                ? 'bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200'
-                : 'bg-white text-gray-600 border-gray-200'
+              statusFilter === "draft"
+                ? "bg-purple-600 text-white border-purple-600 shadow-sm shadow-purple-200"
+                : "bg-white text-gray-600 border-gray-200"
             }`}
           >
             Draft ({draftCount})
@@ -359,8 +367,8 @@ const ProductsList = ({
                 disabled={page <= 1}
                 className={`px-3 py-1 text-xs rounded-lg border ${
                   page <= 1
-                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                    : "border-gray-300 text-gray-700 hover:bg-gray-50"
                 }`}
               >
                 Previous
@@ -373,8 +381,8 @@ const ProductsList = ({
                 disabled={page >= totalPages}
                 className={`px-3 py-1 text-xs rounded-lg border ${
                   page >= totalPages
-                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
-                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                    : "border-gray-300 text-gray-700 hover:bg-gray-50"
                 }`}
               >
                 Next
@@ -390,7 +398,7 @@ const ProductsList = ({
           {/* Backdrop */}
           <div
             className={`absolute inset-0 bg-black/30 transition-opacity duration-200 ${
-              isCategorySheetOpen ? 'opacity-100' : 'opacity-0'
+              isCategorySheetOpen ? "opacity-100" : "opacity-0"
             }`}
             onClick={closeCategorySheet}
           />
@@ -398,7 +406,7 @@ const ProductsList = ({
           {/* Drawer */}
           <div
             className={`absolute right-0 top-0 h-full w-64 bg-white shadow-2xl border-l border-gray-100 flex flex-col transform transition-transform duration-300 ${
-              isCategorySheetOpen ? 'translate-x-0' : 'translate-x-full'
+              isCategorySheetOpen ? "translate-x-0" : "translate-x-full"
             }`}
           >
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
