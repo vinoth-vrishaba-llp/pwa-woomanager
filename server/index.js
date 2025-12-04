@@ -851,7 +851,6 @@ app.post("/api/bootstrap", async (req, res) => {
     const key = cacheKeyFromConfig(resolvedConfig);
 
     const cachedProducts = getCached("products", key, 2 * 60 * 60 * 1000);
-    const cachedCustomers = getCached("customers", key, 2 * 60 * 60 * 1000);
     const cachedReport = getCached("report", key, 5 * 60 * 1000);
     const cachedAbandoned = getCached("abandonedCarts", key, 60 * 1000);
 
@@ -895,9 +894,6 @@ app.post("/api/bootstrap", async (req, res) => {
         ),
     ]);
 
-    // customers: cached full enriched list only
-    let customers = cachedCustomers || [];
-
     if (!cachedProducts) setCached("products", key, productsResult);
     if (!cachedReport) setCached("report", key, report);
     if (!cachedAbandoned) setCached("abandonedCarts", key, abandoned_carts);
@@ -923,7 +919,8 @@ app.post("/api/bootstrap", async (req, res) => {
       products_page: productsResult.page || 1,
       products_per_page: productsResult.per_page || 20,
 
-      customers, // will normally be [] until hit /api/customers
+      // ❗ customers now always empty in bootstrap
+      customers: [],
       report,
       abandoned_carts,
       date_min: startDate,
@@ -1287,68 +1284,19 @@ app.post('/api/customers', async (req, res) => {
       page = 1,
       per_page = 20,
       search, // optional: name/email/phone search
-    } = req.body;
+    } = req.body || {};
 
     const resolvedConfig = await resolveConfig({ config, store_id });
-    const key = cacheKeyFromConfig(resolvedConfig);
 
-    // Check cache first (2 hour TTL) – full enriched list
-    let customers = getCached('customers', key, 2 * 60 * 60 * 1000);
-
-    if (!customers) {
-      console.log('💾 Customers cache miss - fetching fresh data...');
-
-      // Fetch base Woo customers and all orders in parallel
-      const [customersBase, allOrders] = await Promise.all([
-        WooService.getCustomers(resolvedConfig, resolvedConfig.useMock),
-        WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
-      ]);
-
-      // Enrich customers with aggregated order data
-      customers = enrichCustomersWithOrders(customersBase, allOrders);
-
-      // Cache the enriched result for this store
-      setCached('customers', key, customers);
-      console.log(`✅ Customers cached (${customers.length} customers)`);
-    } else {
-      console.log(
-        `✅ Customers loaded from cache (${customers.length} customers)`
-      );
-    }
-
-    // ----- Optional search filter (server-side) -----
-    let filtered = customers;
-    if (search && String(search).trim() !== '') {
-      const q = String(search).trim().toLowerCase();
-      filtered = customers.filter((c) => {
-        const name = (c.name || '').toLowerCase();
-        const email = (c.email || '').toLowerCase();
-        const phone = (c.phone || '').toLowerCase();
-        return (
-          name.includes(q) ||
-          email.includes(q) ||
-          phone.includes(q)
-        );
-      });
-    }
-
-    // ----- Pagination -----
-    const total = filtered.length;
-    const pageNum = parseInt(page, 10) || 1;
-    const perPageNum = parseInt(per_page, 10) || 20;
-    const totalPages = Math.max(1, Math.ceil(total / perPageNum));
-    const safePage = Math.min(pageNum, totalPages);
-
-    const start = (safePage - 1) * perPageNum;
-    const paginated = filtered.slice(start, start + perPageNum);
-
-    return res.json({
-      customers: paginated,
-      total,
-      total_pages: totalPages,
-      page: safePage,
-      per_page: perPageNum,
+    const result = await WooService.getCustomers(resolvedConfig, {
+      page: parseInt(page, 10) || 1,
+      per_page: parseInt(per_page, 10) || 20,
+      search,
+      useMock: resolvedConfig.useMock,
     });
+
+    // result is: { customers, total, total_pages, page, per_page }
+    return res.json(result);
   } catch (err) {
     console.error('Customers API error:', err);
     res.status(500).json({ error: err.message });
