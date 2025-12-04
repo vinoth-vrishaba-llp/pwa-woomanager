@@ -19,6 +19,12 @@ const CustomersList = ({
 
   const safeCustomers = Array.isArray(customers) ? customers : [];
 
+  console.log("CustomersList pagination:", {
+  page,
+  totalPages,
+  count: safeCustomers.length,
+});
+
   // Load customers when component mounts
   useEffect(() => {
     if (onMount) {
@@ -169,6 +175,7 @@ const CustomersList = ({
       )}
     </div>
   );
+  
 };
 
 export default CustomersList;
