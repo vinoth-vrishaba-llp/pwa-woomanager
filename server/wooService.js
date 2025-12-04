@@ -94,6 +94,8 @@ const WooService = {
     }
   },
 
+  
+
   // ------------------ PRODUCTS ------------------
   getProducts: async (config, useMock) => {
     if (useMock) return MOCK_PRODUCTS;
@@ -124,6 +126,116 @@ const WooService = {
     }
   },
 
+    getOrdersPaginated: async (config, options = {}) => {
+    const {
+      page = 1,
+      per_page = 20,
+      status,
+      search,
+      date_after,
+      date_before,
+      useMock = false
+    } = options;
+
+    if (useMock) {
+      const filtered = MOCK_ORDERS.filter(order => {
+        if (status && order.status !== status) return false;
+        if (search) {
+          const searchLower = search.toLowerCase();
+          const orderIdMatch = String(order.id).toLowerCase().includes(searchLower);
+          const customerMatch = order.customer.toLowerCase().includes(searchLower);
+          if (!orderIdMatch && !customerMatch) return false;
+        }
+        return true;
+      });
+
+      const total = filtered.length;
+      const totalPages = Math.ceil(total / per_page);
+      const start = (page - 1) * per_page;
+      const end = start + per_page;
+      const orders = filtered.slice(start, end);
+
+      return {
+        orders,
+        total,
+        total_pages: totalPages,
+        page,
+        per_page,
+      };
+    }
+
+    try {
+      const baseUrl = WooService.cleanUrl(config.url);
+      
+      const params = [`per_page=${per_page}`, `page=${page}`];
+      
+      if (status) {
+        params.push(`status=${encodeURIComponent(status)}`);
+      }
+      
+      if (search) {
+        params.push(`search=${encodeURIComponent(search)}`);
+      }
+      
+      if (date_after) {
+        params.push(`after=${encodeURIComponent(date_after)}T00:00:00`);
+      }
+      
+      if (date_before) {
+        params.push(`before=${encodeURIComponent(date_before)}T23:59:59`);
+      }
+
+      params.push('orderby=date');
+      params.push('order=desc');
+
+      const endpoint = `orders?${params.join('&')}`;
+      const finalUrl = WooService.buildUrl(baseUrl, endpoint, config);
+
+      const response = await fetch(finalUrl);
+      
+      if (!response.ok) {
+        throw new Error(`Order API error: ${response.status}`);
+      }
+
+      const orders = await response.json();
+      
+      const totalOrders = parseInt(response.headers.get('X-WP-Total') || '0', 10);
+      const totalPages = parseInt(response.headers.get('X-WP-TotalPages') || '1', 10);
+
+      const mappedOrders = orders.map((order) => ({
+        id: order.id,
+        customer_id: order.customer_id ?? null,
+        customer: order.billing
+          ? `${order.billing.first_name} ${order.billing.last_name}`.trim() || 'Guest'
+          : 'Guest',
+        billing_email: order.billing?.email || null,
+        total: parseFloat(order.total),
+        status: order.status,
+        date: new Date(order.date_created).toISOString(),
+        items: order.line_items?.length || 0,
+        line_items: order.line_items,
+        billing: order.billing,
+        shipping: order.shipping,
+        payment_method: order.payment_method,
+        payment_method_title: order.payment_method_title,
+        transaction_id: order.transaction_id || null,
+        currency_symbol: order.currency_symbol,
+        shipping_total: parseFloat(order.shipping_total || '0') || 0,
+        discount_total: parseFloat(order.discount_total || '0') || 0,
+      }));
+
+      return {
+        orders: mappedOrders,
+        total: totalOrders,
+        total_pages: totalPages,
+        page,
+        per_page,
+      };
+    } catch (err) {
+      console.error('Fetch Orders Paginated Error:', err);
+      throw err;
+    }
+  },
   // ------------------ PRODUCT CATEGORIES ------------------
   getProductCategories: async (config) => {
     try {
