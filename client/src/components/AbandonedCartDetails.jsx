@@ -1,4 +1,3 @@
-// client/src/components/AbandonedCartDetails.jsx
 import React from "react";
 import {
   ArrowLeft,
@@ -12,6 +11,22 @@ import {
 } from "lucide-react";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
+
+// 🔹 Force all cart timestamps to Asia/Kolkata
+const formatDateTimeIST = (value) => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(d);
+};
 
 const AbandonedCartDetails = ({ cart, loading, error, onBack, onRefresh }) => {
   if (loading) return <LoadingState />;
@@ -48,8 +63,15 @@ const AbandonedCartDetails = ({ cart, loading, error, onBack, onRefresh }) => {
   const cartTotal =
     Number(raw.cartTotal ?? cart.cartTotal ?? cart.total ?? 0) || 0;
   const currency = raw.currency || cart.currency || "INR";
+
+  // Prefer normalized IST date from backend
   const createdAtRaw =
-    raw.created_at || cart.created_at || cart.dateTime || null;
+    raw.date_iso ||
+    cart.date_iso ||
+    raw.created_at ||
+    cart.created_at ||
+    cart.dateTime ||
+    null;
 
   const userDetails = raw.user_details || {};
   const orderDetails = raw.order_details || {};
@@ -96,20 +118,7 @@ const AbandonedCartDetails = ({ cart, loading, error, onBack, onRefresh }) => {
       ? "bg-red-100 text-red-700"
       : "bg-gray-100 text-gray-600";
 
-  const formatDateTime = (value) => {
-    if (!value) return "";
-    const d = new Date(value.replace(" ", "T"));
-    if (Number.isNaN(d.getTime())) return value;
-    return d.toLocaleString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
-  const createdAtLabel = formatDateTime(createdAtRaw);
+  const createdAtLabel = createdAtRaw ? formatDateTimeIST(createdAtRaw) : "";
 
   const formatMoney = (amount) =>
     `${currency === "INR" ? "₹" : ""}${Number(amount || 0).toFixed(2)}`;

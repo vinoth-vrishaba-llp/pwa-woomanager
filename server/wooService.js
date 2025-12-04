@@ -1,5 +1,7 @@
 // server/wooService.js
 const { MOCK_ORDERS, MOCK_PRODUCTS } = require('./mockData');
+const { DateTime } = require('luxon');
+
 
 const WooService = {
   // Returns full URL with https:// for API calls
@@ -76,7 +78,10 @@ const WooService = {
         billing_email: order.billing?.email || null,
         total: parseFloat(order.total),
         status: order.status,
-        date: new Date(order.date_created).toISOString(),
+        date: DateTime.fromISO(order.date_created, { zone: 'utc' })
+      .setZone('Asia/Kolkata')
+      .toISO(), // full ISO in Asia/Kolkata
+
         items: order.line_items?.length || 0,
         line_items: order.line_items,
         billing: order.billing,
@@ -97,34 +102,59 @@ const WooService = {
   
 
   // ------------------ PRODUCTS ------------------
-  getProducts: async (config, useMock) => {
-    if (useMock) return MOCK_PRODUCTS;
+getProducts: async (config, useMock, { page = 1, per_page = 100 } = {}) => {
+  if (useMock) {
+    const total = MOCK_PRODUCTS.length;
+    const totalPages = Math.ceil(total / per_page);
+    const start = (page - 1) * per_page;
+    const end = start + per_page;
+    const products = MOCK_PRODUCTS.slice(start, end);
+    return {
+      products,
+      total,
+      total_pages: totalPages,
+      page,
+      per_page,
+    };
+  }
 
-    try {
-      const baseUrl = WooService.cleanUrl(config.url);
-      const finalUrl = WooService.buildUrl(baseUrl, 'products?per_page=100', config);
+  try {
+    const baseUrl = WooService.cleanUrl(config.url);
+    const params = [`per_page=${per_page}`, `page=${page}`];
+    const endpoint = `products?${params.join('&')}`; // will include auth via buildUrl
+    const finalUrl = WooService.buildUrl(baseUrl, endpoint, config);
 
-      const response = await fetch(finalUrl);
-      if (!response.ok) throw new Error(`Products API error: ${response.status}`);
+    const response = await fetch(finalUrl);
+    if (!response.ok) throw new Error(`Products API error: ${response.status}`);
 
-      const data = await response.json();
+    const data = await response.json();
 
-      return data.map((p) => ({
-        id: p.id,
-        name: p.name,
-        price: parseFloat(p.price) || 0,
-        stock: p.stock_quantity || 0,
-        status: p.stock_status || 'instock',
-        post_status: p.status,
-        categories: p.categories || [],
-        sku: p.sku || null,
-        image: p.images?.[0]?.src || null,
-      }));
-    } catch (err) {
-      console.error('Fetch Products Error:', err);
-      throw err;
-    }
-  },
+    const totalProducts = parseInt(response.headers.get('X-WP-Total') || '0', 10);
+    const totalPages = parseInt(response.headers.get('X-WP-TotalPages') || '1', 10);
+    const mapped = data.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: parseFloat(p.price) || 0,
+      stock: p.stock_quantity || 0,
+      status: p.stock_status || 'instock',
+      post_status: p.status,
+      categories: p.categories || [],
+      sku: p.sku || null,
+      image: p.images?.[0]?.src || null,
+    }));
+
+    return {
+      products: mapped,
+      total: totalProducts,
+      total_pages: totalPages,
+      page,
+      per_page,
+    };
+  } catch (err) {
+    console.error('Fetch Products Error:', err);
+    throw err;
+  }
+},
 
     getOrdersPaginated: async (config, options = {}) => {
     const {
@@ -211,7 +241,10 @@ const WooService = {
         billing_email: order.billing?.email || null,
         total: parseFloat(order.total),
         status: order.status,
-        date: new Date(order.date_created).toISOString(),
+        date: DateTime.fromISO(order.date_created, { zone: 'utc' })
+      .setZone('Asia/Kolkata')
+      .toISO(), // full ISO in Asia/Kolkata
+
         items: order.line_items?.length || 0,
         line_items: order.line_items,
         billing: order.billing,
@@ -266,19 +299,40 @@ const WooService = {
   },
 
   // ------------------ CUSTOMERS ------------------
-  getCustomers: async (config, useMock) => {
-    if (useMock) return [];
+ // ------------------ CUSTOMERS ------------------
+getCustomers: async (config, useMock) => {
+  if (useMock) return [];
 
-    try {
-      const baseUrl = WooService.cleanUrl(config.url);
-      const finalUrl = WooService.buildUrl(baseUrl, 'customers?per_page=100', config);
+  try {
+    const baseUrl = WooService.cleanUrl(config.url);
+    const finalUrl = WooService.buildUrl(
+      baseUrl,
+      'customers?per_page=100',
+      config
+    );
 
-      const response = await fetch(finalUrl);
-      if (!response.ok) throw new Error(`Customers API error: ${response.status}`);
+    const response = await fetch(finalUrl);
+    if (!response.ok)
+      throw new Error(`Customers API error: ${response.status}`);
 
-      const data = await response.json();
+    const data = await response.json();
 
-      return data.map((c) => ({
+    return data.map((c) => {
+      let date_iso = null;
+
+      if (c.date_created) {
+        try {
+          // WooCommerce usually sends UTC-ish timestamps
+          date_iso = DateTime.fromISO(c.date_created, { zone: 'utc' })
+            .setZone('Asia/Kolkata')
+            .toISO();
+        } catch (e) {
+          // fallback – keep original if luxon fails
+          date_iso = c.date_created;
+        }
+      }
+
+      return {
         id: c.id,
         name:
           `${c.first_name || ''} ${c.last_name || ''}`.trim() ||
@@ -286,17 +340,18 @@ const WooService = {
           'Customer',
         email: c.email || '',
         phone: c.billing?.phone || '',
-        date_created: c.date_created || null,
+        date_created: date_iso,
         is_paying_customer: Boolean(c.is_paying_customer),
         avatar_url: c.avatar_url || null,
         billing: c.billing || {},
         shipping: c.shipping || {},
-      }));
-    } catch (err) {
-      console.error('Fetch Customers Error:', err);
-      throw err;
-    }
-  },
+      };
+    });
+  } catch (err) {
+    console.error('Fetch Customers Error:', err);
+    throw err;
+  }
+},
 
   getSalesReport: async (config, { date_min, date_max } = {}) => {
     const baseUrl = WooService.cleanUrl(config.url);
@@ -364,15 +419,16 @@ const WooService = {
 // ------------------ ABANDONED CARTS ------------------
 // NOTE: wc-wcar plugin uses its own REST namespace: wc-wcar/v1
 
-WooService.getAbandonedCarts = async (config, useMock) => {
+WooService.getAbandonedCarts = async (config, useMock, { page = 1, per_page = 20 } = {}) => {
   if (useMock) return [];
 
   const baseUrl = WooService.cleanUrl(config.url);
   const { key, secret } = config;
 
   const url = `${baseUrl}/wp-json/wc-wcar/v1/abandoned-carts?consumer_key=${encodeURIComponent(
-    key
-  )}&consumer_secret=${encodeURIComponent(secret)}`;
+  key
+)}&consumer_secret=${encodeURIComponent(secret)}&page=${page}&per_page=${per_page}`;
+
 
   const res = await fetch(url);
   if (!res.ok) {
@@ -390,11 +446,17 @@ WooService.getAbandonedCarts = async (config, useMock) => {
     const dateTime = c.dateTime || null;
     let date_iso = null;
     if (dateTime) {
-      const d = new Date(dateTime);
-      if (!Number.isNaN(d.getTime())) {
-        date_iso = d.toISOString();
-      }
-    }
+  try {
+    date_iso = DateTime.fromISO(String(dateTime), { zone: 'utc' })
+      .setZone('Asia/Kolkata')
+      .toISO();
+  } catch (e) {
+    // fallback
+    const d = new Date(dateTime);
+    if (!Number.isNaN(d.getTime())) date_iso = d.toISOString();
+  }
+}
+
 
     return {
       id: c.id,
