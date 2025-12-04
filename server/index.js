@@ -848,13 +848,12 @@ app.post('/api/bootstrap', async (req, res) => {
     const resolvedConfig = await resolveConfig({ config, store_id });
     const key = cacheKeyFromConfig(resolvedConfig);
 
-    const cachedOrders = getCached('orders', key, 60 * 1000);
     const cachedProducts = getCached('products', key, 2 * 60 * 60 * 1000);
     const cachedCustomers = getCached('customers', key, 2 * 60 * 60 * 1000);
     const cachedReport = getCached('report', key, 5 * 60 * 1000);
-    const cachedAbandoned = getCached('abandonedCarts', key, 60 * 1000); // ✅ NEW (short TTL)
+    const cachedAbandoned = getCached('abandonedCarts', key, 60 * 1000);
 
-    // ---- default last 30 days (same logic as /api/reports/sales) ----
+    // ---- default last 30 days for report ----
     let startDate;
     let endDate;
     {
@@ -863,7 +862,7 @@ app.post('/api/bootstrap', async (req, res) => {
       end.setUTCHours(23, 59, 59, 999);
 
       const start = new Date(now);
-      start.setDate(start.getDate() - 29); // 30 days including today
+      start.setDate(start.getDate() - 29);
       start.setUTCHours(0, 0, 0, 0);
 
       const fmt = (d) => d.toISOString().slice(0, 10);
@@ -871,9 +870,14 @@ app.post('/api/bootstrap', async (req, res) => {
       endDate = fmt(end);
     }
 
-    const [orders, products, report, abandoned_carts] = await Promise.all([
-      cachedOrders ||
-        WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
+    // Fetch first page of orders with pagination
+    const ordersResult = await WooService.getOrdersPaginated(resolvedConfig, {
+      page: 1,
+      per_page: 20,
+      useMock: resolvedConfig.useMock
+    });
+
+    const [products, report, abandoned_carts] = await Promise.all([
       cachedProducts ||
         WooService.getProducts(resolvedConfig, resolvedConfig.useMock),
       cachedReport ||
@@ -882,33 +886,27 @@ app.post('/api/bootstrap', async (req, res) => {
           date_max: endDate,
         }),
       cachedAbandoned ||
-        WooService.getAbandonedCarts(
-          resolvedConfig,
-          resolvedConfig.useMock
-        ), // ✅ NEW
+        WooService.getAbandonedCarts(resolvedConfig, resolvedConfig.useMock),
     ]);
 
-    let customers = cachedCustomers;
-    if (!customers) {
-      const baseCustomers = await WooService.getCustomers(
-        resolvedConfig,
-        resolvedConfig.useMock
-      );
-      customers = enrichCustomersWithOrders(baseCustomers, orders);
-      setCached('customers', key, customers);
-    }
+    // For customers, use cached if available, otherwise return empty array
+    // Customers will be loaded separately when the Customers page is accessed
+    let customers = cachedCustomers || [];
 
-    if (!cachedOrders) setCached('orders', key, orders);
     if (!cachedProducts) setCached('products', key, products);
     if (!cachedReport) setCached('report', key, report);
-    if (!cachedAbandoned) setCached('abandonedCarts', key, abandoned_carts); // ✅ NEW
+    if (!cachedAbandoned) setCached('abandonedCarts', key, abandoned_carts);
 
     return res.json({
-      orders,
+      orders: ordersResult.orders,
+      total_orders: ordersResult.total,
+      total_pages: ordersResult.total_pages,
+      current_page: ordersResult.page,
+      per_page: ordersResult.per_page,
       products,
-      customers,
+      customers, // Will be empty on first load, populated when visiting Customers page
       report,
-      abandoned_carts, // ✅ NEW FIELD
+      abandoned_carts,
       date_min: startDate,
       date_max: endDate,
     });
@@ -1035,13 +1033,20 @@ app.get('/api/notifications/:storeId', async (req, res) => {
 // Orders
 app.post('/api/orders', async (req, res) => {
   try {
-    const { config, store_id } = req.body;
+    const { config, store_id, page = 1, per_page = 20, status, search, date_after, date_before } = req.body;
     const resolvedConfig = await resolveConfig({ config, store_id });
-    const orders = await WooService.getOrders(
-      resolvedConfig,
-      resolvedConfig.useMock
-    );
-    res.json({ orders });
+    
+    const result = await WooService.getOrdersPaginated(resolvedConfig, {
+      page: parseInt(page, 10),
+      per_page: parseInt(per_page, 10),
+      status,
+      search,
+      date_after,
+      date_before,
+      useMock: resolvedConfig.useMock
+    });
+    
+    res.json(result);
   } catch (err) {
     console.error('Orders API error:', err);
     res.status(500).json({ error: err.message });
@@ -1248,13 +1253,29 @@ app.post('/api/customers', async (req, res) => {
   try {
     const { config, store_id } = req.body;
     const resolvedConfig = await resolveConfig({ config, store_id });
+    const key = cacheKeyFromConfig(resolvedConfig);
 
-    const [customersBase, orders] = await Promise.all([
-      WooService.getCustomers(resolvedConfig, resolvedConfig.useMock),
-      WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
-    ]);
+    // Check cache first (2 hour TTL)
+    let customers = getCached('customers', key, 2 * 60 * 60 * 1000);
+    
+    if (!customers) {
+      console.log('💾 Customers cache miss - fetching fresh data...');
+      
+      // Fetch customers and orders in parallel
+      const [customersBase, allOrders] = await Promise.all([
+        WooService.getCustomers(resolvedConfig, resolvedConfig.useMock),
+        WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
+      ]);
 
-    const customers = enrichCustomersWithOrders(customersBase, orders);
+      // Enrich customers with order data
+      customers = enrichCustomersWithOrders(customersBase, allOrders);
+      
+      // Cache the enriched result
+      setCached('customers', key, customers);
+      console.log(`✅ Customers cached (${customers.length} customers)`);
+    } else {
+      console.log(`✅ Customers loaded from cache (${customers.length} customers)`);
+    }
 
     res.json({ customers });
   } catch (err) {
@@ -1262,6 +1283,7 @@ app.post('/api/customers', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // Sales report (supports store_id)
 app.post('/api/reports/sales', async (req, res) => {

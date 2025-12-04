@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from "react";
-import { Package, RefreshCw, Search, CalendarRange, X } from "lucide-react";
+import { Package, RefreshCw, Search, CalendarRange, X, ChevronLeft, ChevronRight } from "lucide-react";
 import StatusBadge from "./ui/StatusBadge";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
@@ -11,16 +11,20 @@ const OrdersList = ({
   onRefresh,
   onLogout,
   onSelectOrder,
+  onPageChange,
+  currentPage = 1,
+  totalPages = 1,
+  totalOrders = 0,
 }) => {
-  const [statusFilter, setStatusFilter] = useState("all"); // all | processing | completed | cancelled
+  const [statusFilter, setStatusFilter] = useState("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [quickRange, setQuickRange] = useState("none"); // 'none' | 'today' | '7d' | '30d'
+  const [quickRange, setQuickRange] = useState("none");
 
   const safeOrders = Array.isArray(orders) ? orders : [];
 
-  // ---- Counts for pills ----
+  // ---- Counts for pills (based on current page data) ----
   const { allCount, processingCount, completedCount, cancelledCount } =
     useMemo(() => {
       let processing = 0;
@@ -46,15 +50,15 @@ const OrdersList = ({
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, "0");
     const day = String(date.getDate()).padStart(2, "0");
-    return `${year}-${month}-${day}`; // "YYYY-MM-DD" in local timezone
+    return `${year}-${month}-${day}`;
   };
 
   const applyQuickRange = (range) => {
     if (quickRange === range) {
-      // toggle off
       setQuickRange("none");
       setFromDate("");
       setToDate("");
+      handleFilterChange(1, statusFilter, "", "", "");
       return;
     }
 
@@ -62,89 +66,81 @@ const OrdersList = ({
     today.setHours(0, 0, 0, 0);
 
     let from = null;
-    let to = new Date(today); // clone
+    let to = new Date(today);
 
     if (range === "today") {
       from = new Date(today);
     } else if (range === "7d") {
       from = new Date(today);
-      from.setDate(from.getDate() - 6); // last 7 days including today
+      from.setDate(from.getDate() - 6);
     } else if (range === "30d") {
       from = new Date(today);
-      from.setDate(from.getDate() - 29); // last 30 days including today
+      from.setDate(from.getDate() - 29);
     }
 
+    const fromStr = from ? formatDateInput(from) : "";
+    const toStr = formatDateInput(to);
+
     setQuickRange(range);
-    setFromDate(from ? formatDateInput(from) : "");
-    setToDate(formatDateInput(to));
+    setFromDate(fromStr);
+    setToDate(toStr);
+    handleFilterChange(1, statusFilter, searchQuery, fromStr, toStr);
   };
 
   const handleFromDateChange = (value) => {
     setQuickRange("none");
     setFromDate(value);
+    handleFilterChange(1, statusFilter, searchQuery, value, toDate);
   };
 
   const handleToDateChange = (value) => {
     setQuickRange("none");
     setToDate(value);
+    handleFilterChange(1, statusFilter, searchQuery, fromDate, value);
   };
 
   const clearDates = () => {
     setFromDate("");
     setToDate("");
     setQuickRange("none");
+    handleFilterChange(1, statusFilter, searchQuery, "", "");
+  };
+
+  const handleStatusFilterChange = (status) => {
+    setStatusFilter(status);
+    handleFilterChange(1, status, searchQuery, fromDate, toDate);
+  };
+
+  const handleSearchChange = (query) => {
+    setSearchQuery(query);
+    // Debounce search in production - for now immediate
+    handleFilterChange(1, statusFilter, query, fromDate, toDate);
+  };
+
+  const handleFilterChange = (page, status, search, from, to) => {
+    if (onPageChange) {
+      onPageChange(page, {
+        status: status !== "all" ? status : undefined,
+        search: search || undefined,
+        date_after: from || undefined,
+        date_before: to || undefined,
+      });
+    }
   };
 
   const hasActiveDateFilter = Boolean(fromDate || toDate);
 
-  // ---- Filtering logic ----
-  const filteredOrders = useMemo(() => {
-    let result = [...safeOrders];
-
-    // Status filter
-    if (statusFilter !== "all") {
-      result = result.filter((o) => o.status === statusFilter);
+  const handlePreviousPage = () => {
+    if (currentPage > 1) {
+      handleFilterChange(currentPage - 1, statusFilter, searchQuery, fromDate, toDate);
     }
+  };
 
-    // Search filter
-    if (searchQuery.trim() !== "") {
-      const q = searchQuery.trim().toLowerCase();
-      result = result.filter((o) => {
-        const idStr = String(o.id || "").toLowerCase();
-        const customer = (o.customer || "").toLowerCase();
-        return idStr.includes(q) || customer.includes(q);
-      });
+  const handleNextPage = () => {
+    if (currentPage < totalPages) {
+      handleFilterChange(currentPage + 1, statusFilter, searchQuery, fromDate, toDate);
     }
-
-    // Date range filter
-    if (fromDate || toDate) {
-      const from = fromDate ? new Date(fromDate) : null;
-      const to = toDate ? new Date(toDate) : null;
-      if (to) {
-        to.setHours(23, 59, 59, 999);
-      }
-
-      result = result.filter((o) => {
-        if (!o.date) return false;
-        const d = new Date(o.date);
-        if (Number.isNaN(d.getTime())) return false;
-
-        if (from && d < from) return false;
-        if (to && d > to) return false;
-        return true;
-      });
-    }
-
-    // Newest first
-    result.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    return result;
-  }, [safeOrders, statusFilter, searchQuery, fromDate, toDate]);
-
-  const resultCount = filteredOrders.length;
-  const resultLabel = `${resultCount} ${
-    resultCount === 1 ? "order" : "orders"
-  } found`;
+  };
 
   return (
     <div className="pb-24 pt-16 px-4 animate-fade-in min-h-screen">
@@ -177,7 +173,7 @@ const OrdersList = ({
               type="text"
               placeholder="Search orders by ID or customer..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => handleSearchChange(e.target.value)}
               className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white"
             />
           </div>
@@ -260,47 +256,47 @@ const OrdersList = ({
           </div>
         </div>
 
-        {/* Status filter pills with counts */}
+        {/* Status filter pills */}
         <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
           <button
-            onClick={() => setStatusFilter("all")}
+            onClick={() => handleStatusFilterChange("all")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
               statusFilter === "all"
                 ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
                 : "bg-white border-gray-200 text-gray-600"
             }`}
           >
-            All ({allCount})
+            All
           </button>
           <button
-            onClick={() => setStatusFilter("processing")}
+            onClick={() => handleStatusFilterChange("processing")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
               statusFilter === "processing"
                 ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
                 : "bg-white border-gray-200 text-gray-600"
             }`}
           >
-            Processing ({processingCount})
+            Processing
           </button>
           <button
-            onClick={() => setStatusFilter("completed")}
+            onClick={() => handleStatusFilterChange("completed")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
               statusFilter === "completed"
                 ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
                 : "bg-white border-gray-200 text-gray-600"
             }`}
           >
-            Completed ({completedCount})
+            Completed
           </button>
           <button
-            onClick={() => setStatusFilter("cancelled")}
+            onClick={() => handleStatusFilterChange("cancelled")}
             className={`px-4 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors border ${
               statusFilter === "cancelled"
                 ? "bg-purple-600 text-white border-purple-600 shadow-md shadow-purple-200"
                 : "bg-white border-gray-200 text-gray-600"
             }`}
           >
-            Cancelled ({cancelledCount})
+            Cancelled
           </button>
         </div>
       </div>
@@ -312,16 +308,21 @@ const OrdersList = ({
         <ErrorState message={error} onRetry={onRefresh} onLogout={onLogout} />
       ) : (
         <div className="space-y-3 mt-3">
-          {/* result count */}
-          <p className="text-xs text-gray-500">{resultLabel}</p>
+          {/* Result count and pagination info */}
+          <div className="flex justify-between items-center text-xs text-gray-500">
+            <p>
+              Showing {safeOrders.length > 0 ? ((currentPage - 1) * 20) + 1 : 0} - {Math.min(currentPage * 20, totalOrders)} of {totalOrders} orders
+            </p>
+            <p>Page {currentPage} of {totalPages}</p>
+          </div>
 
-          {filteredOrders.length === 0 && (
+          {safeOrders.length === 0 && (
             <div className="text-center py-10 text-gray-400">
               No orders found.
             </div>
           )}
 
-          {filteredOrders.map((order) => (
+          {safeOrders.map((order) => (
             <div
               key={order.id}
               onClick={() => onSelectOrder(order)}
@@ -367,6 +368,41 @@ const OrdersList = ({
               </div>
             </div>
           ))}
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <div className="flex justify-center items-center gap-4 pt-4 pb-2">
+              <button
+                onClick={handlePreviousPage}
+                disabled={currentPage === 1 || loading}
+                className={`flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  currentPage === 1 || loading
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-purple-600 text-white hover:bg-purple-700 active:scale-95"
+                }`}
+              >
+                <ChevronLeft size={16} />
+                Previous
+              </button>
+
+              <span className="text-sm font-medium text-gray-700">
+                {currentPage} / {totalPages}
+              </span>
+
+              <button
+                onClick={handleNextPage}
+                disabled={currentPage === totalPages || loading}
+                className={`flex items-center gap-1 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  currentPage === totalPages || loading
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-purple-600 text-white hover:bg-purple-700 active:scale-95"
+                }`}
+              >
+                Next
+                <ChevronRight size={16} />
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
