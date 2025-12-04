@@ -50,10 +50,10 @@ function urlBase64ToUint8Array(base64String) {
 const App = () => {
   const [activeTab, setActiveTab] = useState("dashboard");
 
-  // ✅ NEW: update banner state
+  // ✅ update banner state
   const [updateReady, setUpdateReady] = useState(false);
 
-  // ✅ NEW: listen for SW update event
+  // ✅ listen for SW update event
   useEffect(() => {
     const handler = () => {
       console.log("[APP] New version available event received");
@@ -65,7 +65,7 @@ const App = () => {
       window.removeEventListener("woomanager-update-available", handler);
   }, []);
 
-  // ✅ NEW: User authentication state
+  // ✅ User authentication state
   const [authLoading, setAuthLoading] = useState(true);
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(null);
@@ -76,34 +76,36 @@ const App = () => {
     totalOrders: 0,
     perPage: 20,
   });
-  const [productsPagination, setProductsPagination] = useState({
-  currentPage: 1,
-  totalPages: 1,
-  totalProducts: 0,
-  perPage: 20,
-});
 
-const [abandonedPagination, setAbandonedPagination] = useState({
-  currentPage: 1,
-  totalPages: 1,
-  total: 0,
-  perPage: 20,
-});
+  const [abandonedPagination, setAbandonedPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    total: 0,
+    perPage: 20,
+  });
 
-// 🔹 NEW: products pagination
-const [productPagination, setProductPagination] = useState({
-  currentPage: 1,
-  totalPages: 1,
-  totalProducts: 0,
-  perPage: 20,
-});
+  // 🔹 products pagination (this is the one actually used)
+  const [productPagination, setProductPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalProducts: 0,
+    perPage: 20,
+  });
 
+  // 🔹 NEW: customers pagination (client-side, no server cache)
+  const [customersPagination, setCustomersPagination] = useState({
+    currentPage: 1,
+    totalPages: 1,
+    totalCustomers: 0,
+    perPage: 20,
+  });
 
+  // Just used to show initial loader for customers tab
   const [customersLoaded, setCustomersLoaded] = useState(false);
 
   // unified session:
   // { type:'sso', store_id, store_url, app_user_id }
-  // or { type:'manual', config: { url, key, secret, useProxy, useMock } } - kept for demo mode
+  // or { type:'manual', config: { url, key, secret, useProxy, useMock } }
   const [session, setSession] = useState(null);
 
   const [data, setData] = useState({
@@ -123,7 +125,6 @@ const [productPagination, setProductPagination] = useState({
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsError, setNotificationsError] = useState(null);
 
-  // 👇 ADD THESE
   const [abandonedCarts, setAbandonedCarts] = useState([]);
   const [abandonedCartsLoading, setAbandonedCartsLoading] = useState(false);
   const [abandonedCartsError, setAbandonedCartsError] = useState(null);
@@ -160,7 +161,7 @@ const [productPagination, setProductPagination] = useState({
     return <SsoComplete />;
   }
 
-  // ✅ NEW: Check authentication on mount
+  // ✅ Check authentication on mount
   useEffect(() => {
     const checkAuth = async () => {
       const savedToken = localStorage.getItem("woo_manager_token");
@@ -236,7 +237,7 @@ const [productPagination, setProductPagination] = useState({
     }
   }, [session]);
 
-  // ✅ NEW: Auth success handler
+  // Auth success handler
   const handleAuthSuccess = (userData, authToken) => {
     setUser(userData);
     setToken(authToken);
@@ -251,72 +252,70 @@ const [productPagination, setProductPagination] = useState({
       });
     }
   };
-  // ✅ NEW: Product pagination
-// ✅ NEW: Handle product pagination
-const handleProductPageChange = useCallback(
-  async (nextPage) => {
-    if (!session) return;
 
-    setLoading(true);
-    setError(null);
+  // Handle product pagination
+  const handleProductPageChange = useCallback(
+    async (nextPage) => {
+      if (!session) return;
 
-    const body =
-      session.type === "sso"
-        ? {
-            store_id: session.store_id,
-            page: nextPage,
-            per_page: productPagination.perPage,
-          }
-        : {
-            config: session.config,
-            page: nextPage,
-            per_page: productPagination.perPage,
-          };
+      setLoading(true);
+      setError(null);
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/products`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      const body =
+        session.type === "sso"
+          ? {
+              store_id: session.store_id,
+              page: nextPage,
+              per_page: productPagination.perPage,
+            }
+          : {
+              config: session.config,
+              page: nextPage,
+              per_page: productPagination.perPage,
+            };
 
-      if (!res.ok) {
-        throw new Error("Failed to fetch products");
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/products`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+          throw new Error("Failed to fetch products");
+        }
+
+        const json = await res.json();
+
+        setData((prev) => ({
+          ...prev,
+          products: Array.isArray(json.products) ? json.products : [],
+        }));
+
+        setProductPagination({
+          currentPage: json.page || nextPage,
+          totalPages: json.total_pages || 1,
+          totalProducts: json.total || 0,
+          perPage: json.per_page || productPagination.perPage,
+        });
+      } catch (err) {
+        console.error("Products pagination error:", err);
+        setError(err.message || "Failed to fetch products");
+      } finally {
+        setLoading(false);
       }
+    },
+    [session, productPagination.perPage]
+  );
 
-      const json = await res.json();
-
-      setData((prev) => ({
-        ...prev,
-        products: Array.isArray(json.products) ? json.products : [],
-      }));
-
-      setProductPagination({
-        currentPage: json.page || nextPage,
-        totalPages: json.total_pages || 1,
-        totalProducts: json.total || 0,
-        perPage: json.per_page || productPagination.perPage,
-      });
-    } catch (err) {
-      console.error("Products pagination error:", err);
-      setError(err.message || "Failed to fetch products");
-    } finally {
-      setLoading(false);
-    }
-  },
-  [session, productPagination.perPage]
-);
-
-
-  // ✅ NEW: Store connected handler
+  // Store connected handler
   const handleStoreConnected = () => {
-    // Refresh user data
+    // simplest: reload app state
     window.location.reload();
   };
 
-  // ✅ NEW: Razorpay connected handler
+  // Razorpay connected handler
   const handleRazorpayConnected = ({ store_id }) => {
-    // Update user flag so we skip Razorpay screen next time
     setUser((prev) =>
       prev
         ? {
@@ -326,7 +325,6 @@ const handleProductPageChange = useCallback(
         : prev
     );
 
-    // Ensure session is set (should already be set if Woo is connected)
     if (!session && user?.has_store_connected) {
       setSession({
         type: "sso",
@@ -336,11 +334,10 @@ const handleProductPageChange = useCallback(
       });
     }
 
-    // Go to dashboard
     setActiveTab("dashboard");
   };
 
-  // -------- Demo mode (kept for testing) --------
+  // Demo mode (kept for testing)
   const handleDemo = () => {
     const demoConfig = {
       useMock: true,
@@ -353,7 +350,7 @@ const handleProductPageChange = useCallback(
     localStorage.setItem("woo_manager_config", JSON.stringify(demoConfig));
   };
 
-  // ✅ UPDATED: Logout handler
+  // Logout handler
   const handleLogout = () => {
     const keyCurrent = getNotificationsSeenKey(session);
     if (keyCurrent) {
@@ -386,7 +383,6 @@ const handleProductPageChange = useCallback(
     setActiveTab("abandoned-cart-details");
 
     try {
-      // Pull fresh detail from backend if available
       const fullCart = await fetchAbandonedCart(session.store_id, cart.id);
       setSelectedAbandonedCart(fullCart || cart);
     } catch (err) {
@@ -428,76 +424,74 @@ const handleProductPageChange = useCallback(
   };
 
   // -------- Fetch everything via /api/bootstrap --------
- const fetchAllData = useCallback(async () => {
-  if (!session) return;
+  const fetchAllData = useCallback(async () => {
+    if (!session) return;
 
-  setLoading(true);
-  setError(null);
+    setLoading(true);
+    setError(null);
 
-  const body =
-    session.type === "sso"
-      ? { store_id: session.store_id }
-      : { config: session.config };
+    const body =
+      session.type === "sso"
+        ? { store_id: session.store_id }
+        : { config: session.config };
 
-  try {
-    const res = await fetch(`${API_BASE_URL}/api/bootstrap`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/bootstrap`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-    if (!res.ok) {
-      throw new Error("Failed to fetch store data");
+      if (!res.ok) {
+        throw new Error("Failed to fetch store data");
+      }
+
+      const json = await res.json();
+
+      setData({
+        orders: json.orders || [],
+        products: json.products || [],
+        customers: json.customers || [], // customers now loaded via /api/customers with pagination
+      });
+
+      // Orders pagination
+      setOrdersPagination({
+        currentPage: json.current_page || 1,
+        totalPages: json.total_pages || 1,
+        totalOrders: json.total_orders || 0,
+        perPage: json.per_page || 20,
+      });
+
+      // Products pagination (from bootstrap meta)
+      setProductPagination({
+        currentPage: json.products_page || 1,
+        totalPages: json.products_total_pages || 1,
+        totalProducts:
+          json.products_total ||
+          (Array.isArray(json.products) ? json.products.length : 0),
+        perPage: json.products_per_page || 20,
+      });
+
+      setAbandonedCarts(json.abandoned_carts || []);
+      setSalesReport(json.report || null);
+    } catch (err) {
+      let msg = "Failed to connect.";
+      if (
+        err.message.includes("Failed to fetch") ||
+        err.message.includes("CORS")
+      ) {
+        msg =
+          "Connection blocked by browser security (CORS). Please enable 'Use CORS Proxy' in the login screen.";
+      } else {
+        msg = err.message;
+      }
+      setError(msg);
+    } finally {
+      setLoading(false);
     }
-
-    const json = await res.json();
-
-    setData({
-      orders: json.orders || [],
-      products: json.products || [],
-      customers: json.customers || [], // still loaded separately for full list
-    });
-
-    // ✅ Orders pagination
-    setOrdersPagination({
-      currentPage: json.current_page || 1,
-      totalPages: json.total_pages || 1,
-      totalOrders: json.total_orders || 0,
-      perPage: json.per_page || 20,
-    });
-
-    // ✅ Products pagination (from bootstrap meta)
-    setProductPagination({
-      currentPage: json.products_page || 1,
-      totalPages: json.products_total_pages || 1,
-      totalProducts:
-        json.products_total ||
-        (Array.isArray(json.products) ? json.products.length : 0),
-      perPage: json.products_per_page || 20,
-    });
-
-    setAbandonedCarts(json.abandoned_carts || []);
-    setSalesReport(json.report || null);
-  } catch (err) {
-    let msg = "Failed to connect.";
-    if (
-      err.message.includes("Failed to fetch") ||
-      err.message.includes("CORS")
-    ) {
-      msg =
-        "Connection blocked by browser security (CORS). Please enable 'Use CORS Proxy' in the login screen.";
-    } else {
-      msg = err.message;
-    }
-    setError(msg);
-  } finally {
-    setLoading(false);
-  }
-}, [session]);
-
+  }, [session]);
 
   const loadNotifications = useCallback(async () => {
-    // Only meaningful for SSO stores (where we have a store_id)
     if (!session || session.type !== "sso" || !session.store_id) return;
 
     setNotificationsLoading(true);
@@ -514,7 +508,7 @@ const handleProductPageChange = useCallback(
     }
   }, [session]);
 
-  // ✅ NEW: Handle order pagination
+  // Handle order pagination
   const handleOrderPageChange = useCallback(
     async (page, filters = {}) => {
       if (!session) return;
@@ -570,78 +564,99 @@ const handleProductPageChange = useCallback(
     [session]
   );
 
-  
+  // 🔹 Customers: paginated from server, cache only in browser state
+  const loadCustomers = useCallback(
+    async (page = 1, options = {}) => {
+      if (!session) return;
 
-  // ✅ NEW: Load customers on-demand
-  const loadCustomers = useCallback(async () => {
-    if (!session || customersLoaded) return;
+      console.log("🔄 Loading customers page", page);
 
-    console.log("🔄 Loading customers...");
+      setLoading(true);
+      setError(null);
 
-    const body =
-      session.type === "sso"
-        ? { store_id: session.store_id }
-        : { config: session.config };
+      const body =
+        session.type === "sso"
+          ? {
+              store_id: session.store_id,
+              page,
+              per_page: customersPagination.perPage,
+              ...options, // e.g., search if you add it later
+            }
+          : {
+              config: session.config,
+              page,
+              per_page: customersPagination.perPage,
+              ...options,
+            };
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/customers`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/customers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
 
-      if (!res.ok) {
-        throw new Error("Failed to fetch customers");
+        if (!res.ok) {
+          throw new Error("Failed to fetch customers");
+        }
+
+        const json = await res.json();
+
+        setData((prev) => ({
+          ...prev,
+          customers: json.customers || [],
+        }));
+
+        setCustomersPagination({
+          currentPage: json.page || page,
+          totalPages: json.total_pages || 1,
+          totalCustomers: json.total || 0,
+          perPage: json.per_page || customersPagination.perPage,
+        });
+
+        setCustomersLoaded(true);
+        console.log("✅ Customers loaded");
+      } catch (err) {
+        console.error("Failed to load customers:", err);
+        setError(err.message);
+      } finally {
+        setLoading(false);
       }
-
-      const json = await res.json();
-
-      setData((prev) => ({
-        ...prev,
-        customers: json.customers || [],
-      }));
-
-      setCustomersLoaded(true);
-      console.log("✅ Customers loaded");
-    } catch (err) {
-      console.error("Failed to load customers:", err);
-      setError(err.message);
-    }
-  }, [session, customersLoaded]);
+    },
+    [session, customersPagination.perPage]
+  );
 
   const loadAbandonedCarts = useCallback(
-  async (page = 1) => {
-    if (!session || session.type !== "sso" || !session.store_id) return;
+    async (page = 1) => {
+      if (!session || session.type !== "sso" || !session.store_id) return;
 
-    setAbandonedCartsLoading(true);
-    setAbandonedCartsError(null);
+      setAbandonedCartsLoading(true);
+      setAbandonedCartsError(null);
 
-    try {
-      // assuming fetchAbandonedCarts accepts (storeId, page, perPage)
-      const res = await fetchAbandonedCarts(session.store_id, page, 20);
+      try {
+        const res = await fetchAbandonedCarts(session.store_id, page, 20);
 
-      // Backend should return:
-      // { carts, total, total_pages, page, per_page }
-      const carts = res?.carts || res || [];
+        const carts = res?.carts || res || [];
 
-      setAbandonedCarts(Array.isArray(carts) ? carts : []);
+        setAbandonedCarts(Array.isArray(carts) ? carts : []);
 
-      setAbandonedPagination({
-        currentPage: res.page || page,
-        totalPages: res.total_pages || 1,
-        total: res.total || carts.length || 0,
-        perPage: res.per_page || 20,
-      });
-    } catch (err) {
-      console.error("Abandoned carts fetch failed:", err);
-      setAbandonedCartsError(err.message || "Failed to fetch abandoned carts");
-    } finally {
-      setAbandonedCartsLoading(false);
-    }
-  },
-  [session]
-);
-
+        setAbandonedPagination({
+          currentPage: res.page || page,
+          totalPages: res.total_pages || 1,
+          total: res.total || carts.length || 0,
+          perPage: res.per_page || 20,
+        });
+      } catch (err) {
+        console.error("Abandoned carts fetch failed:", err);
+        setAbandonedCartsError(
+          err.message || "Failed to fetch abandoned carts"
+        );
+      } finally {
+        setAbandonedCartsLoading(false);
+      }
+    },
+    [session]
+  );
 
   useEffect(() => {
     if (session?.type === "sso" && session.store_id) {
@@ -665,7 +680,6 @@ const handleProductPageChange = useCallback(
         return;
       }
 
-      // Request notification permission if needed
       if ("Notification" in window && Notification.permission === "default") {
         await Notification.requestPermission();
       }
@@ -699,108 +713,69 @@ const handleProductPageChange = useCallback(
       console.error("[Push] Subscription failed:", err);
     }
   }, []);
+
   useEffect(() => {
     if (session?.type === "sso" && session.store_id) {
       subscribeToPush(session.store_id);
     }
   }, [session, subscribeToPush]);
 
-  // 🔔 Listen for messages from the service worker (abandoned cart / others)
-useEffect(() => {
-  if (!("serviceWorker" in navigator)) return;
+  // SW message listener (abandoned cart / orders)
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
 
-  const handler = async (event) => {
-    const data = event.data || {};
-    if (!data.action) return;
+    const handler = async (event) => {
+      const data = event.data || {};
+      if (!data.action) return;
 
-    // 🔥 Abandoned cart push → open details
-    if (data.action === "open-abandoned-cart" && data.cartId) {
-      if (!session || session.type !== "sso" || !session.store_id) {
-        setActiveTab("abandoned-carts");
+      if (data.action === "open-abandoned-cart" && data.cartId) {
+        if (!session || session.type !== "sso" || !session.store_id) {
+          setActiveTab("abandoned-carts");
+          return;
+        }
+
+        setActiveTab("abandoned-cart-details");
+        setAbandonedCartDetailLoading(true);
+        setAbandonedCartDetailError(null);
+
+        try {
+          const fullCart = await fetchAbandonedCart(
+            session.store_id,
+            data.cartId
+          );
+          setSelectedAbandonedCart(fullCart);
+        } catch (err) {
+          console.error("Abandoned cart from push failed:", err);
+          setAbandonedCartDetailError(
+            err.message || "Failed to open abandoned cart"
+          );
+        } finally {
+          setAbandonedCartDetailLoading(false);
+        }
         return;
       }
 
-      setActiveTab("abandoned-cart-details");
-      setAbandonedCartDetailLoading(true);
-      setAbandonedCartDetailError(null);
+      if (data.action === "open-order" && data.orderId) {
+        if (!session) {
+          setActiveTab("orders");
+          return;
+        }
 
-      try {
-        const fullCart = await fetchAbandonedCart(
-          session.store_id,
-          data.cartId
-        );
-        setSelectedAbandonedCart(fullCart);
-      } catch (err) {
-        console.error("Abandoned cart from push failed:", err);
-        setAbandonedCartDetailError(
-          err.message || "Failed to open abandoned cart"
-        );
-      } finally {
-        setAbandonedCartDetailLoading(false);
-      }
-      return;
-    }
-
-    // 🔥 Order push → open order details
-    if (data.action === "open-order" && data.orderId) {
-      if (!session) {
-        // No session yet → just navigate to orders
-        setActiveTab("orders");
-        return;
-      }
-
-      try {
-        // Load the page filtered by that order ID, then open details
-        await handleOrderPageChange(1, { search: String(data.orderId) });
-
-        const found = (Array.isArray(data.orders) ? data.orders : []).find(
-          (o) => String(o.id) === String(data.orderId)
-        );
-
-        // Fallback: search in current state
-        const orderToOpen =
-          found ||
-          (Array.isArray(data.orders)
-            ? null
-            : (Array.isArray(data.orders) ? data.orders : data.orders) &&
-              (Array.isArray(data.orders) ? data.orders : data.orders).find(
-                (o) => String(o.id) === String(data.orderId)
-              )) ||
-          (Array.isArray(data.orders)
-            ? null
-            : Array.isArray(data.orders)
-            ? data.orders
-            : null);
-
-        const inState =
-          (Array.isArray(data.orders) ? data.orders : []) ||
-          (Array.isArray(data.orders) ? data.orders : []);
-
-        const stateOrder =
-          (Array.isArray(inState) &&
-            inState.find((o) => String(o.id) === String(data.orderId))) ||
-          null;
-
-        const finalOrder = found || stateOrder;
-
-        if (finalOrder) {
-          handleSelectOrder(finalOrder);
-        } else {
+        try {
+          await handleOrderPageChange(1, { search: String(data.orderId) });
+          setActiveTab("orders");
+        } catch (err) {
+          console.error("Failed to open order from push:", err);
           setActiveTab("orders");
         }
-      } catch (err) {
-        console.error("Failed to open order from push:", err);
-        setActiveTab("orders");
       }
-    }
-  };
+    };
 
-  navigator.serviceWorker.addEventListener("message", handler);
-  return () => {
-    navigator.serviceWorker.removeEventListener("message", handler);
-  };
-}, [session, handleOrderPageChange]);
-
+    navigator.serviceWorker.addEventListener("message", handler);
+    return () => {
+      navigator.serviceWorker.removeEventListener("message", handler);
+    };
+  }, [session, handleOrderPageChange]);
 
   useEffect(() => {
     if (session) {
@@ -828,7 +803,6 @@ useEffect(() => {
       return;
     }
 
-    // We only support Razorpay lookup for SSO stores
     const storeId =
       session?.type === "sso" && session.store_id ? session.store_id : null;
 
@@ -863,7 +837,7 @@ useEffect(() => {
     }
 
     if (session?.type === "sso" && session.store_id) {
-      loadNotifications(); // from earlier fix
+      loadNotifications();
     }
 
     setActiveTab("notifications");
@@ -908,7 +882,7 @@ useEffect(() => {
     }).length;
   }, [session, notifications, derivedNotifications, notificationsSeenAt]);
 
-  // ✅ NEW: Auth loading state
+  // Auth loading state
   if (authLoading) {
     return (
       <div className="min-h-screen bg-purple-700 flex items-center justify-center">
@@ -917,20 +891,19 @@ useEffect(() => {
     );
   }
 
-  // ✅ NEW: Authentication + connection flow
-  // 1. No user -> Show AuthView (Login/Signup)
+  // 1. No user -> AuthView
   if (!user) {
     return <AuthView onAuthSuccess={handleAuthSuccess} />;
   }
 
-  // 2. User exists but no Woo store connected -> Show WooCommerce connect view
+  // 2. No Woo store -> ConnectStoreView
   if (!user.has_store_connected) {
     return (
       <ConnectStoreView user={user} onStoreConnected={handleStoreConnected} />
     );
   }
 
-  // 3. Woo store connected but Razorpay NOT connected -> Show Razorpay connect view
+  // 3. Woo connected, Razorpay not -> RazorpayConnectView
   if (user.has_store_connected && !user.has_razorpay_connected) {
     return (
       <RazorpayConnectView
@@ -941,12 +914,13 @@ useEffect(() => {
     );
   }
 
-  // 4. Both Woo + Razorpay connected -> app shell / dashboard
+  // 4. Full app
   const storeUrl = session?.store_url || user.store_url || "Store";
 
   const newAbandonedCount = Array.isArray(abandonedCarts)
     ? abandonedCarts.length
     : 0;
+
   // -------- Screen switch --------
   const renderContent = () => {
     switch (activeTab) {
@@ -966,7 +940,6 @@ useEffect(() => {
             notificationsCount={notificationsCount}
             onSelectOrder={handleSelectOrder}
             onOpenNotifications={handleOpenNotifications}
-            // 👇 NEW
             abandonedCarts={abandonedCarts}
             newAbandonedCount={newAbandonedCount}
             onOpenAbandoned={() => setActiveTab("abandoned-carts")}
@@ -981,28 +954,25 @@ useEffect(() => {
             onRefresh={fetchAllData}
             onLogout={handleLogout}
             onSelectOrder={handleSelectOrder}
-            // ✅ NEW: Pagination props
             onPageChange={handleOrderPageChange}
             currentPage={ordersPagination.currentPage}
             totalPages={ordersPagination.totalPages}
             totalOrders={ordersPagination.totalOrders}
           />
         );
-     case "products":
-  return (
-    <ProductsList
-      products={data.products}
-      loading={loading}
-      error={error}
-      onRefresh={fetchAllData}
-      onLogout={handleLogout}
-      page={productPagination.currentPage}
-      totalPages={productPagination.totalPages}
-      onPageChange={handleProductPageChange}
-    />
-  );
-
-
+      case "products":
+        return (
+          <ProductsList
+            products={data.products}
+            loading={loading}
+            error={error}
+            onRefresh={fetchAllData}
+            onLogout={handleLogout}
+            page={productPagination.currentPage}
+            totalPages={productPagination.totalPages}
+            onPageChange={handleProductPageChange}
+          />
+        );
       case "analytics":
         return (
           <Analytics
@@ -1033,10 +1003,19 @@ useEffect(() => {
             customers={data.customers}
             loading={loading || !customersLoaded}
             error={error}
-            onRefresh={loadCustomers} // ✅ Changed
+            // Refresh current page
+            onRefresh={() =>
+              loadCustomers(customersPagination.currentPage || 1)
+            }
             onLogout={handleLogout}
             onSelectCustomer={handleSelectCustomer}
-            onMount={loadCustomers} // ✅ NEW
+            // Load first page when screen mounts
+            onMount={() => loadCustomers(1)}
+            // Pagination props
+            page={customersPagination.currentPage}
+            totalPages={customersPagination.totalPages}
+            totalCustomers={customersPagination.totalCustomers}
+            onPageChange={(nextPage) => loadCustomers(nextPage)}
           />
         );
       case "customer-details":
@@ -1078,23 +1057,21 @@ useEffect(() => {
         );
       }
       case "abandoned-carts":
-  return (
-    <AbandonedCarts
-      carts={abandonedCarts}
-      loading={abandonedCartsLoading}
-      error={abandonedCartsError}
-      onRefresh={() =>
-        loadAbandonedCarts(abandonedPagination.currentPage || 1)
-      }
-      onBack={() => setActiveTab("dashboard")}
-      onSelectCart={handleSelectAbandonedCart}
-      // 🔹 Pagination props
-      page={abandonedPagination.currentPage}
-      totalPages={abandonedPagination.totalPages}
-      onPageChange={loadAbandonedCarts}
-    />
-  );
-
+        return (
+          <AbandonedCarts
+            carts={abandonedCarts}
+            loading={abandonedCartsLoading}
+            error={abandonedCartsError}
+            onRefresh={() =>
+              loadAbandonedCarts(abandonedPagination.currentPage || 1)
+            }
+            onBack={() => setActiveTab("dashboard")}
+            onSelectCart={handleSelectAbandonedCart}
+            page={abandonedPagination.currentPage}
+            totalPages={abandonedPagination.totalPages}
+            onPageChange={loadAbandonedCarts}
+          />
+        );
       case "abandoned-cart-details":
         return (
           <AbandonedCartDetails
@@ -1105,7 +1082,6 @@ useEffect(() => {
             onRefresh={refreshSelectedAbandonedCart}
           />
         );
-
       default:
         return null;
     }
@@ -1117,7 +1093,7 @@ useEffect(() => {
       <div className="h-1 bg-purple-800 w-full" />
       <main className="h-full min-h-screen bg-gray-50">{renderContent()}</main>
 
-      {/* ✅ New version banner */}
+      {/* New version banner */}
       {updateReady && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-2xl px-5 py-4 max-w-xs w-[90%] shadow-2xl border border-purple-100">
@@ -1144,12 +1120,6 @@ useEffect(() => {
             </div>
           </div>
         </div>
-      )}
-
-      {activeTab !== "order-details" && activeTab !== "customer-details" && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe-area z-50 max-w-md mx-auto">
-          {/* ... your existing nav ... */}
-        </nav>
       )}
 
       {activeTab !== "order-details" && activeTab !== "customer-details" && (
@@ -1189,7 +1159,7 @@ useEffect(() => {
               <span className="text-[10px] mt-1 font-medium">Orders</span>
             </button>
 
-            {/* 🔥 New: Abandoned tab */}
+            {/* Abandoned tab */}
             <button
               onClick={() => setActiveTab("abandoned-carts")}
               className={`flex flex-col items-center p-2 rounded-xl transition-all duration-200 ${

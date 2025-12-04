@@ -317,25 +317,47 @@ const WooService = {
     }
   },
 
-  // ------------------ CUSTOMERS (BASE) ------------------
-  getCustomers: async (config, useMock) => {
-    if (useMock) return [];
+  // ------------------ CUSTOMERS (PAGINATED) ------------------
+  getCustomers: async (
+    config,
+    { page = 1, per_page = 20, search, useMock = false } = {}
+  ) => {
+    if (useMock) {
+      // If you later add MOCK_CUSTOMERS, paginate here.
+      return {
+        customers: [],
+        total: 0,
+        total_pages: 1,
+        page,
+        per_page,
+      };
+    }
 
     try {
       const baseUrl = WooService.cleanUrl(config.url);
-      const finalUrl = WooService.buildUrl(
-        baseUrl,
-        "customers?per_page=100",
-        config
-      );
+      const params = [`per_page=${per_page}`, `page=${page}`];
+
+      if (search && String(search).trim() !== "") {
+        params.push(`search=${encodeURIComponent(search.trim())}`);
+      }
+
+      const endpoint = `customers?${params.join("&")}`;
+      const finalUrl = WooService.buildUrl(baseUrl, endpoint, config);
 
       const response = await fetch(finalUrl);
-      if (!response.ok)
+      if (!response.ok) {
         throw new Error(`Customers API error: ${response.status}`);
+      }
 
       const data = await response.json();
 
-      return data.map((c) => {
+      const total = parseInt(response.headers.get("X-WP-Total") || "0", 10);
+      const totalPages = parseInt(
+        response.headers.get("X-WP-TotalPages") || "1",
+        10
+      );
+
+      const customers = data.map((c) => {
         let date_iso = null;
 
         if (c.date_created) {
@@ -363,6 +385,14 @@ const WooService = {
           shipping: c.shipping || {},
         };
       });
+
+      return {
+        customers,
+        total,
+        total_pages: totalPages,
+        page,
+        per_page,
+      };
     } catch (err) {
       console.error("Fetch Customers Error:", err);
       throw err;
