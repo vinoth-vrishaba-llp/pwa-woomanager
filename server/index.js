@@ -843,93 +843,120 @@ app.post('/api/store/by-app-user', async (req, res) => {
 });
 
 // ------------------ BOOTSTRAP: ORDERS + PRODUCTS + CUSTOMERS + REPORT + ABANDONED CARTS ------------------
-app.post('/api/bootstrap', async (req, res) => {
+app.post("/api/bootstrap", async (req, res) => {
   try {
     const { config, store_id } = req.body;
 
     const resolvedConfig = await resolveConfig({ config, store_id });
     const key = cacheKeyFromConfig(resolvedConfig);
 
-    const cachedProducts = getCached('products', key, 2 * 60 * 60 * 1000);
-    const cachedCustomers = getCached('customers', key, 2 * 60 * 60 * 1000);
-    const cachedReport = getCached('report', key, 5 * 60 * 1000);
-    const cachedAbandoned = getCached('abandonedCarts', key, 60 * 1000);
+    const cachedProducts = getCached("products", key, 2 * 60 * 60 * 1000);
+    const cachedCustomers = getCached("customers", key, 2 * 60 * 60 * 1000);
+    const cachedReport = getCached("report", key, 5 * 60 * 1000);
+    const cachedAbandoned = getCached("abandonedCarts", key, 60 * 1000);
 
-    // ---- default last 30 days for report ----
+    // ---- last 30 days in Asia/Kolkata ----
     let startDate;
     let endDate;
     {
-  const now = DateTime.now().setZone('Asia/Kolkata');
-  const end = now.endOf('day');
-  const start = now.minus({ days: 29 }).startOf('day');
+      const now = DateTime.now().setZone("Asia/Kolkata");
+      const end = now.endOf("day");
+      const start = now.minus({ days: 29 }).startOf("day");
 
-  const fmt = (dt) => dt.toISODate(); // YYYY-MM-DD in Asia/Kolkata
-  startDate = fmt(start);
-  endDate = fmt(end);
-}
+      const fmt = (dt) => dt.toISODate();
+      startDate = fmt(start);
+      endDate = fmt(end);
+    }
 
-    // Fetch first page of orders with pagination
-   // Fetch first page of orders with pagination (20)
-const ordersResult = await WooService.getOrdersPaginated(resolvedConfig, {
-  page: 1,
-  per_page: 20,
-  useMock: resolvedConfig.useMock
-});
+    // First page of orders (20)
+    const ordersResult = await WooService.getOrdersPaginated(resolvedConfig, {
+      page: 1,
+      per_page: 20,
+      useMock: resolvedConfig.useMock,
+    });
 
-const [products, report, abandoned_carts] = await Promise.all([
-  cachedProducts ||
-    WooService.getProducts(resolvedConfig, resolvedConfig.useMock, { page: 1, per_page: 20 }),
-  cachedReport ||
-    WooService.getSalesReport(resolvedConfig, {
-      date_min: startDate,
-      date_max: endDate,
-    }),
-  cachedAbandoned ||
-    WooService.getAbandonedCarts(resolvedConfig, resolvedConfig.useMock, { page: 1, per_page: 20 }),
-]);
+    const [productsResult, report, abandoned_carts] = await Promise.all([
+      cachedProducts ||
+        WooService.getProducts(
+          resolvedConfig,
+          resolvedConfig.useMock,
+          { page: 1, per_page: 20 }
+        ),
+      cachedReport ||
+        WooService.getSalesReport(resolvedConfig, {
+          date_min: startDate,
+          date_max: endDate,
+        }),
+      cachedAbandoned ||
+        WooService.getAbandonedCarts(
+          resolvedConfig,
+          resolvedConfig.useMock,
+          { page: 1, per_page: 20 }
+        ),
+    ]);
 
-    // For customers, use cached if available, otherwise return empty array
-    // Customers will be loaded separately when the Customers page is accessed
+    // customers: cached full enriched list only
     let customers = cachedCustomers || [];
 
-    if (!cachedProducts) setCached('products', key, products);
-    if (!cachedReport) setCached('report', key, report);
-    if (!cachedAbandoned) setCached('abandonedCarts', key, abandoned_carts);
+    if (!cachedProducts) setCached("products", key, productsResult);
+    if (!cachedReport) setCached("report", key, report);
+    if (!cachedAbandoned) setCached("abandonedCarts", key, abandoned_carts);
+
+    const productsArray = Array.isArray(productsResult)
+      ? productsResult
+      : Array.isArray(productsResult.products)
+      ? productsResult.products
+      : [];
 
     return res.json({
+      // orders + meta
       orders: ordersResult.orders,
       total_orders: ordersResult.total,
       total_pages: ordersResult.total_pages,
       current_page: ordersResult.page,
       per_page: ordersResult.per_page,
-      products,
-      customers, // Will be empty on first load, populated when visiting Customers page
+
+      // products (array + meta)
+      products: productsArray,
+      products_total: productsResult.total || productsArray.length,
+      products_total_pages: productsResult.total_pages || 1,
+      products_page: productsResult.page || 1,
+      products_per_page: productsResult.per_page || 20,
+
+      customers, // will normally be [] until hit /api/customers
       report,
       abandoned_carts,
       date_min: startDate,
       date_max: endDate,
     });
   } catch (err) {
-    console.error('Bootstrap API error:', err);
+    console.error("Bootstrap API error:", err);
     return res.status(500).json({ error: err.message });
   }
 });
 
 // Abandoned carts list
-app.post('/api/abandoned-carts', async (req, res) => {
+app.post("/api/abandoned-carts", async (req, res) => {
   try {
     const { config, store_id, page = 1, per_page = 20 } = req.body || {};
     const resolvedConfig = await resolveConfig({ config, store_id });
 
-    const result = await WooService.getAbandonedCarts(
+    const items = await WooService.getAbandonedCarts(
       resolvedConfig,
       resolvedConfig.useMock,
       { page: parseInt(page, 10), per_page: parseInt(per_page, 10) }
     );
 
-    res.json(result); // { carts, total, total_pages, page, per_page }
+    // Keep it simple for now – one page, meta is trivial
+    res.json({
+      carts: items,
+      total: items.length,
+      total_pages: 1,
+      page: parseInt(page, 10),
+      per_page: parseInt(per_page, 10),
+    });
   } catch (err) {
-    console.error('Abandoned carts API error:', err);
+    console.error("Abandoned carts API error:", err);
     res.status(500).json({ error: err.message });
   }
 });

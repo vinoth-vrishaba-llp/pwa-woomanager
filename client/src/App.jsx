@@ -90,6 +90,14 @@ const [abandonedPagination, setAbandonedPagination] = useState({
   perPage: 20,
 });
 
+// 🔹 NEW: products pagination
+const [productPagination, setProductPagination] = useState({
+  currentPage: 1,
+  totalPages: 1,
+  totalProducts: 0,
+  perPage: 20,
+});
+
 
   const [customersLoaded, setCustomersLoaded] = useState(false);
 
@@ -244,8 +252,9 @@ const [abandonedPagination, setAbandonedPagination] = useState({
     }
   };
   // ✅ NEW: Product pagination
+// ✅ NEW: Handle product pagination
 const handleProductPageChange = useCallback(
-  async (page) => {
+  async (nextPage) => {
     if (!session) return;
 
     setLoading(true);
@@ -255,13 +264,13 @@ const handleProductPageChange = useCallback(
       session.type === "sso"
         ? {
             store_id: session.store_id,
-            page,
-            per_page: 20,
+            page: nextPage,
+            per_page: productPagination.perPage,
           }
         : {
             config: session.config,
-            page,
-            per_page: 20,
+            page: nextPage,
+            per_page: productPagination.perPage,
           };
 
     try {
@@ -277,27 +286,27 @@ const handleProductPageChange = useCallback(
 
       const json = await res.json();
 
-      // Expecting backend to return:
-      // { products, total, total_pages, page, per_page }
       setData((prev) => ({
         ...prev,
-        products: json.products || [],
+        products: Array.isArray(json.products) ? json.products : [],
       }));
 
-      setProductsPagination({
-        currentPage: json.page || page,
+      setProductPagination({
+        currentPage: json.page || nextPage,
         totalPages: json.total_pages || 1,
-        totalProducts: json.total || (json.products?.length || 0),
-        perPage: json.per_page || 20,
+        totalProducts: json.total || 0,
+        perPage: json.per_page || productPagination.perPage,
       });
     } catch (err) {
+      console.error("Products pagination error:", err);
       setError(err.message || "Failed to fetch products");
     } finally {
       setLoading(false);
     }
   },
-  [session]
+  [session, productPagination.perPage]
 );
+
 
   // ✅ NEW: Store connected handler
   const handleStoreConnected = () => {
@@ -419,63 +428,73 @@ const handleProductPageChange = useCallback(
   };
 
   // -------- Fetch everything via /api/bootstrap --------
-  const fetchAllData = useCallback(async () => {
-    if (!session) return;
+ const fetchAllData = useCallback(async () => {
+  if (!session) return;
 
-    setLoading(true);
-    setError(null);
+  setLoading(true);
+  setError(null);
 
-    // body depends on how user is connected
-    const body =
-      session.type === "sso"
-        ? { store_id: session.store_id } // secure SSO path
-        : { config: session.config }; // manual / demo path
+  const body =
+    session.type === "sso"
+      ? { store_id: session.store_id }
+      : { config: session.config };
 
-    try {
-      const res = await fetch(`${API_BASE_URL}/api/bootstrap`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/bootstrap`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-      if (!res.ok) {
-        throw new Error("Failed to fetch store data");
-      }
-
-      const json = await res.json();
-
-      setData({
-        orders: json.orders || [],
-        products: json.products || [],
-        customers: json.customers || [], // Empty initially
-      });
-
-      // ✅ NEW: Update pagination state
-      setOrdersPagination({
-        currentPage: json.current_page || 1,
-        totalPages: json.total_pages || 1,
-        totalOrders: json.total_orders || 0,
-        perPage: json.per_page || 20,
-      });
-
-      setAbandonedCarts(json.abandoned_carts || []);
-      setSalesReport(json.report || null);
-    } catch (err) {
-      let msg = "Failed to connect.";
-      if (
-        err.message.includes("Failed to fetch") ||
-        err.message.includes("CORS")
-      ) {
-        msg =
-          "Connection blocked by browser security (CORS). Please enable 'Use CORS Proxy' in the login screen.";
-      } else {
-        msg = err.message;
-      }
-      setError(msg);
-    } finally {
-      setLoading(false);
+    if (!res.ok) {
+      throw new Error("Failed to fetch store data");
     }
-  }, [session]);
+
+    const json = await res.json();
+
+    setData({
+      orders: json.orders || [],
+      products: json.products || [],
+      customers: json.customers || [], // still loaded separately for full list
+    });
+
+    // ✅ Orders pagination
+    setOrdersPagination({
+      currentPage: json.current_page || 1,
+      totalPages: json.total_pages || 1,
+      totalOrders: json.total_orders || 0,
+      perPage: json.per_page || 20,
+    });
+
+    // ✅ Products pagination (from bootstrap meta)
+    setProductPagination({
+      currentPage: json.products_page || 1,
+      totalPages: json.products_total_pages || 1,
+      totalProducts:
+        json.products_total ||
+        (Array.isArray(json.products) ? json.products.length : 0),
+      perPage: json.products_per_page || 20,
+    });
+
+    setAbandonedCarts(json.abandoned_carts || []);
+    setSalesReport(json.report || null);
+  } catch (err) {
+    let msg = "Failed to connect.";
+    if (
+      err.message.includes("Failed to fetch") ||
+      err.message.includes("CORS")
+    ) {
+      msg =
+        "Connection blocked by browser security (CORS). Please enable 'Use CORS Proxy' in the login screen.";
+    } else {
+      msg = err.message;
+    }
+    setError(msg);
+  } finally {
+    setLoading(false);
+  }
+}, [session]);
+
 
   const loadNotifications = useCallback(async () => {
     // Only meaningful for SSO stores (where we have a store_id)
@@ -550,6 +569,8 @@ const handleProductPageChange = useCallback(
     },
     [session]
   );
+
+  
 
   // ✅ NEW: Load customers on-demand
   const loadCustomers = useCallback(async () => {
@@ -967,23 +988,20 @@ useEffect(() => {
             totalOrders={ordersPagination.totalOrders}
           />
         );
-      case "products":
+     case "products":
   return (
     <ProductsList
       products={data.products}
       loading={loading}
       error={error}
-      // Refresh current page only
-      onRefresh={() =>
-        handleProductPageChange(productsPagination.currentPage || 1)
-      }
+      onRefresh={fetchAllData}
       onLogout={handleLogout}
-      // 🔹 Pagination props
-      page={productsPagination.currentPage}
-      totalPages={productsPagination.totalPages}
+      page={productPagination.currentPage}
+      totalPages={productPagination.totalPages}
       onPageChange={handleProductPageChange}
     />
   );
+
 
       case "analytics":
         return (
