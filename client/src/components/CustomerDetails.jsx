@@ -1,4 +1,3 @@
-// client/src/components/CustomerDetails.jsx
 import React from 'react';
 import {
   ArrowLeft,
@@ -10,6 +9,32 @@ import {
   Package,
 } from 'lucide-react';
 
+// 🔹 Helper: format ISO date in Asia/Kolkata
+const formatDateTimeIST = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat('en-IN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'Asia/Kolkata',
+  }).format(d);
+};
+
+const formatDateIST = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return new Intl.DateTimeFormat('en-IN', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    timeZone: 'Asia/Kolkata',
+  }).format(d);
+};
+
 const CustomerDetails = ({ customer, onBack }) => {
   if (!customer) return null;
 
@@ -17,15 +42,10 @@ const CustomerDetails = ({ customer, onBack }) => {
   const shipping = customer.shipping || {};
   const orders = customer.orders || [];
 
-  const formattedDate =
-    customer.date_created &&
-    new Date(customer.date_created).toLocaleString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
+  // 🔹 Use IST formatting instead of browser default
+  const formattedDate = customer.date_created
+    ? formatDateTimeIST(customer.date_created)
+    : null;
 
   const getStatusColor = (status) => {
     const colors = {
@@ -137,11 +157,7 @@ const CustomerDetails = ({ customer, onBack }) => {
             </div>
             <div className="divide-y divide-gray-100">
               {orders.map((order) => {
-                const orderDate = new Date(order.date).toLocaleDateString(undefined, {
-                  month: 'short',
-                  day: 'numeric',
-                  year: 'numeric',
-                });
+                const orderDate = formatDateIST(order.date);
 
                 return (
                   <div key={order.id} className="p-4 hover:bg-gray-50 transition">

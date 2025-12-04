@@ -9,14 +9,23 @@ import {
 import StatusBadge from './ui/StatusBadge';
 import ErrorState from './ui/ErrorState';
 
-const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
+const ProductsList = ({
+  products,
+  loading,
+  error,
+  onRefresh,
+  onLogout,
+  page = 1,          // 🔹 NEW
+  totalPages = 1,    // 🔹 NEW
+  onPageChange,      // 🔹 NEW
+}) => {
   const [statusFilter, setStatusFilter] = useState('all'); // all | publish | draft
   const [selectedCategoryId, setSelectedCategoryId] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
   // drawer animation state
-  const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);     // controls animation state
-  const [isCategorySheetVisible, setIsCategorySheetVisible] = useState(false); // controls mounting
+  const [isCategorySheetOpen, setIsCategorySheetOpen] = useState(false);
+  const [isCategorySheetVisible, setIsCategorySheetVisible] = useState(false);
 
   const SKELETON_ITEMS = Array.from({ length: 6 });
 
@@ -44,7 +53,7 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
     };
   }, [products]);
 
-  // categories with per-category product counts
+  // categories with per-category product counts (on current page)
   const categories = useMemo(() => {
     const map = new Map();
 
@@ -105,6 +114,18 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
     return result;
   }, [products, statusFilter, selectedCategoryId, searchQuery]);
 
+  // ---- Pagination handlers ----
+
+  const handlePrev = () => {
+    if (!onPageChange) return;
+    if (page > 1) onPageChange(page - 1);
+  };
+
+  const handleNext = () => {
+    if (!onPageChange) return;
+    if (page < totalPages) onPageChange(page + 1);
+  };
+
   // ---- UI blocks ----
 
   const renderSkeletons = () => (
@@ -156,7 +177,7 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
             </div>
             <div className="flex justify-between items-end mt-2">
               <div className="text-sm text-gray-500">
-                Stock:{' '}
+                Stock{' '}
                 <span className="font-medium text-gray-800">
                   {product.stock}
                 </span>
@@ -180,13 +201,11 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
 
   const openCategorySheet = () => {
     setIsCategorySheetVisible(true);
-    // defer to next frame so transition runs
     requestAnimationFrame(() => setIsCategorySheetOpen(true));
   };
 
   const closeCategorySheet = () => {
     setIsCategorySheetOpen(false);
-    // wait for animation to finish before unmount
     setTimeout(() => setIsCategorySheetVisible(false), 250);
   };
 
@@ -273,7 +292,7 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
             />
           </div>
 
-          {/* Category sheet trigger (desktop + mobile) */}
+          {/* Category sheet trigger */}
           <button
             type="button"
             onClick={openCategorySheet}
@@ -329,10 +348,43 @@ const ProductsList = ({ products, loading, error, onRefresh, onLogout }) => {
       ) : loading ? (
         renderSkeletons()
       ) : (
-        renderProducts()
+        <>
+          {renderProducts()}
+
+          {/* 🔹 Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between mt-4">
+              <button
+                onClick={handlePrev}
+                disabled={page <= 1}
+                className={`px-3 py-1 text-xs rounded-lg border ${
+                  page <= 1
+                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Previous
+              </button>
+              <span className="text-xs text-gray-500">
+                Page {page} of {totalPages}
+              </span>
+              <button
+                onClick={handleNext}
+                disabled={page >= totalPages}
+                className={`px-3 py-1 text-xs rounded-lg border ${
+                  page >= totalPages
+                    ? 'border-gray-200 text-gray-300 cursor-not-allowed'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                Next
+              </button>
+            </div>
+          )}
+        </>
       )}
 
-      {/* Category Drawer with animation (desktop + mobile) */}
+      {/* Category Drawer with animation */}
       {isCategorySheetVisible && (
         <div className="fixed inset-0 z-30">
           {/* Backdrop */}

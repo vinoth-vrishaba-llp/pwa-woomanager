@@ -1,5 +1,6 @@
 // server/index.js
 require('dotenv').config();
+process.env.TZ = 'Asia/Kolkata';
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
@@ -857,37 +858,34 @@ app.post('/api/bootstrap', async (req, res) => {
     let startDate;
     let endDate;
     {
-      const now = new Date();
-      const end = new Date(now);
-      end.setUTCHours(23, 59, 59, 999);
+  const now = DateTime.now().setZone('Asia/Kolkata');
+  const end = now.endOf('day');
+  const start = now.minus({ days: 29 }).startOf('day');
 
-      const start = new Date(now);
-      start.setDate(start.getDate() - 29);
-      start.setUTCHours(0, 0, 0, 0);
-
-      const fmt = (d) => d.toISOString().slice(0, 10);
-      startDate = fmt(start);
-      endDate = fmt(end);
-    }
+  const fmt = (dt) => dt.toISODate(); // YYYY-MM-DD in Asia/Kolkata
+  startDate = fmt(start);
+  endDate = fmt(end);
+}
 
     // Fetch first page of orders with pagination
-    const ordersResult = await WooService.getOrdersPaginated(resolvedConfig, {
-      page: 1,
-      per_page: 20,
-      useMock: resolvedConfig.useMock
-    });
+   // Fetch first page of orders with pagination (20)
+const ordersResult = await WooService.getOrdersPaginated(resolvedConfig, {
+  page: 1,
+  per_page: 20,
+  useMock: resolvedConfig.useMock
+});
 
-    const [products, report, abandoned_carts] = await Promise.all([
-      cachedProducts ||
-        WooService.getProducts(resolvedConfig, resolvedConfig.useMock),
-      cachedReport ||
-        WooService.getSalesReport(resolvedConfig, {
-          date_min: startDate,
-          date_max: endDate,
-        }),
-      cachedAbandoned ||
-        WooService.getAbandonedCarts(resolvedConfig, resolvedConfig.useMock),
-    ]);
+const [products, report, abandoned_carts] = await Promise.all([
+  cachedProducts ||
+    WooService.getProducts(resolvedConfig, resolvedConfig.useMock, { page: 1, per_page: 20 }),
+  cachedReport ||
+    WooService.getSalesReport(resolvedConfig, {
+      date_min: startDate,
+      date_max: endDate,
+    }),
+  cachedAbandoned ||
+    WooService.getAbandonedCarts(resolvedConfig, resolvedConfig.useMock, { page: 1, per_page: 20 }),
+]);
 
     // For customers, use cached if available, otherwise return empty array
     // Customers will be loaded separately when the Customers page is accessed
@@ -919,15 +917,16 @@ app.post('/api/bootstrap', async (req, res) => {
 // Abandoned carts list
 app.post('/api/abandoned-carts', async (req, res) => {
   try {
-    const { config, store_id } = req.body;
+    const { config, store_id, page = 1, per_page = 20 } = req.body || {};
     const resolvedConfig = await resolveConfig({ config, store_id });
 
-    const carts = await WooService.getAbandonedCarts(
+    const result = await WooService.getAbandonedCarts(
       resolvedConfig,
-      resolvedConfig.useMock
+      resolvedConfig.useMock,
+      { page: parseInt(page, 10), per_page: parseInt(per_page, 10) }
     );
 
-    res.json({ carts });
+    res.json(result); // { carts, total, total_pages, page, per_page }
   } catch (err) {
     console.error('Abandoned carts API error:', err);
     res.status(500).json({ error: err.message });
@@ -1056,13 +1055,16 @@ app.post('/api/orders', async (req, res) => {
 // Products
 app.post('/api/products', async (req, res) => {
   try {
-    const { config, store_id } = req.body;
+    const { config, store_id, page = 1, per_page = 20 } = req.body || {};
     const resolvedConfig = await resolveConfig({ config, store_id });
-    const products = await WooService.getProducts(
+
+    const result = await WooService.getProducts(
       resolvedConfig,
-      resolvedConfig.useMock
+      resolvedConfig.useMock,
+      { page: parseInt(page, 10), per_page: parseInt(per_page, 10) }
     );
-    res.json({ products });
+
+    res.json(result); // { products, total, total_pages, page, per_page } (see service)
   } catch (err) {
     console.error('Products API error:', err);
     res.status(500).json({ error: err.message });
@@ -1248,41 +1250,83 @@ function enrichCustomersWithOrders(customersBase, orders) {
   return customers;
 }
 
-// Customers (enriched)
+// Customers (enriched + paginated at API level)
 app.post('/api/customers', async (req, res) => {
   try {
-    const { config, store_id } = req.body;
+    const {
+      config,
+      store_id,
+      page = 1,
+      per_page = 20,
+      search, // optional: name/email/phone search
+    } = req.body;
+
     const resolvedConfig = await resolveConfig({ config, store_id });
     const key = cacheKeyFromConfig(resolvedConfig);
 
-    // Check cache first (2 hour TTL)
+    // Check cache first (2 hour TTL) – full enriched list
     let customers = getCached('customers', key, 2 * 60 * 60 * 1000);
-    
+
     if (!customers) {
       console.log('💾 Customers cache miss - fetching fresh data...');
-      
-      // Fetch customers and orders in parallel
+
+      // Fetch base Woo customers and all orders in parallel
       const [customersBase, allOrders] = await Promise.all([
         WooService.getCustomers(resolvedConfig, resolvedConfig.useMock),
         WooService.getOrders(resolvedConfig, resolvedConfig.useMock),
       ]);
 
-      // Enrich customers with order data
+      // Enrich customers with aggregated order data
       customers = enrichCustomersWithOrders(customersBase, allOrders);
-      
-      // Cache the enriched result
+
+      // Cache the enriched result for this store
       setCached('customers', key, customers);
       console.log(`✅ Customers cached (${customers.length} customers)`);
     } else {
-      console.log(`✅ Customers loaded from cache (${customers.length} customers)`);
+      console.log(
+        `✅ Customers loaded from cache (${customers.length} customers)`
+      );
     }
 
-    res.json({ customers });
+    // ----- Optional search filter (server-side) -----
+    let filtered = customers;
+    if (search && String(search).trim() !== '') {
+      const q = String(search).trim().toLowerCase();
+      filtered = customers.filter((c) => {
+        const name = (c.name || '').toLowerCase();
+        const email = (c.email || '').toLowerCase();
+        const phone = (c.phone || '').toLowerCase();
+        return (
+          name.includes(q) ||
+          email.includes(q) ||
+          phone.includes(q)
+        );
+      });
+    }
+
+    // ----- Pagination -----
+    const total = filtered.length;
+    const pageNum = parseInt(page, 10) || 1;
+    const perPageNum = parseInt(per_page, 10) || 20;
+    const totalPages = Math.max(1, Math.ceil(total / perPageNum));
+    const safePage = Math.min(pageNum, totalPages);
+
+    const start = (safePage - 1) * perPageNum;
+    const paginated = filtered.slice(start, start + perPageNum);
+
+    return res.json({
+      customers: paginated,
+      total,
+      total_pages: totalPages,
+      page: safePage,
+      per_page: perPageNum,
+    });
   } catch (err) {
     console.error('Customers API error:', err);
     res.status(500).json({ error: err.message });
   }
 });
+
 
 
 // Sales report (supports store_id)

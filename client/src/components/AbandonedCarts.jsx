@@ -1,8 +1,23 @@
-// client/src/components/AbandonedCarts.jsx
 import React from "react";
 import { ArrowLeft, ShoppingCart, RefreshCcw } from "lucide-react";
 import LoadingState from "./ui/LoadingState";
 import ErrorState from "./ui/ErrorState";
+
+// 🔹 Format date/time in Asia/Kolkata
+const formatDateTimeIST = (value) => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return new Intl.DateTimeFormat("en-IN", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(d);
+};
 
 const AbandonedCarts = ({
   carts,
@@ -10,7 +25,10 @@ const AbandonedCarts = ({
   error,
   onRefresh,
   onBack,
-  onSelectCart, // ✅ new
+  onSelectCart,
+  page = 1,         // 🔹 NEW
+  totalPages = 1,   // 🔹 NEW
+  onPageChange,     // 🔹 NEW
 }) => {
   if (loading) return <LoadingState />;
   if (error)
@@ -27,6 +45,16 @@ const AbandonedCarts = ({
     : Array.isArray(carts?.items)
     ? carts.items
     : [];
+
+  const handlePrev = () => {
+    if (!onPageChange) return;
+    if (page > 1) onPageChange(page - 1);
+  };
+
+  const handleNext = () => {
+    if (!onPageChange) return;
+    if (page < totalPages) onPageChange(page + 1);
+  };
 
   return (
     <div className="pb-24 pt-16 px-4 animate-fade-in min-h-screen bg-gray-50">
@@ -61,9 +89,12 @@ const AbandonedCarts = ({
           const cartId = cart.id;
           const name = cart.userName?.trim() || "Guest";
           const email = cart.email || "No email";
-          const status = cart.orderStatus || "Unknown";
+          const status = cart.orderStatus || "Abandoned";
           const total = Number(cart.cartTotal || 0);
-          const dateTime = cart.dateTime || "";
+
+          // Prefer server-normalized date_iso (IST), fallback to dateTime
+          const rawDate = cart.date_iso || cart.dateTime || "";
+          const dateLabel = formatDateTimeIST(rawDate);
 
           const statusColor =
             status === "Abandoned"
@@ -102,7 +133,7 @@ const AbandonedCarts = ({
                 </div>
 
                 <div className="flex justify-between items-center mt-2 text-xs text-gray-600">
-                  <span>{dateTime}</span>
+                  <span>{dateLabel}</span>
                   <span className="font-bold text-gray-900">
                     ₹{total.toFixed(2)}
                   </span>
@@ -111,6 +142,37 @@ const AbandonedCarts = ({
             </button>
           );
         })}
+
+        {/* 🔹 Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between pt-2">
+            <button
+              onClick={handlePrev}
+              disabled={page <= 1}
+              className={`px-3 py-1 text-xs rounded-lg border ${
+                page <= 1
+                  ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              Previous
+            </button>
+            <span className="text-xs text-gray-500">
+              Page {page} of {totalPages}
+            </span>
+            <button
+              onClick={handleNext}
+              disabled={page >= totalPages}
+              className={`px-3 py-1 text-xs rounded-lg border ${
+                page >= totalPages
+                  ? "border-gray-200 text-gray-300 cursor-not-allowed"
+                  : "border-gray-300 text-gray-700 hover:bg-gray-50"
+              }`}
+            >
+              Next
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

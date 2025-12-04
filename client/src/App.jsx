@@ -76,6 +76,20 @@ const App = () => {
     totalOrders: 0,
     perPage: 20,
   });
+  const [productsPagination, setProductsPagination] = useState({
+  currentPage: 1,
+  totalPages: 1,
+  totalProducts: 0,
+  perPage: 20,
+});
+
+const [abandonedPagination, setAbandonedPagination] = useState({
+  currentPage: 1,
+  totalPages: 1,
+  total: 0,
+  perPage: 20,
+});
+
 
   const [customersLoaded, setCustomersLoaded] = useState(false);
 
@@ -229,6 +243,61 @@ const App = () => {
       });
     }
   };
+  // ✅ NEW: Product pagination
+const handleProductPageChange = useCallback(
+  async (page) => {
+    if (!session) return;
+
+    setLoading(true);
+    setError(null);
+
+    const body =
+      session.type === "sso"
+        ? {
+            store_id: session.store_id,
+            page,
+            per_page: 20,
+          }
+        : {
+            config: session.config,
+            page,
+            per_page: 20,
+          };
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        throw new Error("Failed to fetch products");
+      }
+
+      const json = await res.json();
+
+      // Expecting backend to return:
+      // { products, total, total_pages, page, per_page }
+      setData((prev) => ({
+        ...prev,
+        products: json.products || [],
+      }));
+
+      setProductsPagination({
+        currentPage: json.page || page,
+        totalPages: json.total_pages || 1,
+        totalProducts: json.total || (json.products?.length || 0),
+        perPage: json.per_page || 20,
+      });
+    } catch (err) {
+      setError(err.message || "Failed to fetch products");
+    } finally {
+      setLoading(false);
+    }
+  },
+  [session]
+);
 
   // ✅ NEW: Store connected handler
   const handleStoreConnected = () => {
@@ -519,24 +588,39 @@ const App = () => {
     }
   }, [session, customersLoaded]);
 
-  const loadAbandonedCarts = useCallback(async () => {
+  const loadAbandonedCarts = useCallback(
+  async (page = 1) => {
     if (!session || session.type !== "sso" || !session.store_id) return;
 
     setAbandonedCartsLoading(true);
     setAbandonedCartsError(null);
 
     try {
-      const res = await fetchAbandonedCarts(session.store_id);
-      // assuming your api returns { carts: [...] }
+      // assuming fetchAbandonedCarts accepts (storeId, page, perPage)
+      const res = await fetchAbandonedCarts(session.store_id, page, 20);
+
+      // Backend should return:
+      // { carts, total, total_pages, page, per_page }
       const carts = res?.carts || res || [];
+
       setAbandonedCarts(Array.isArray(carts) ? carts : []);
+
+      setAbandonedPagination({
+        currentPage: res.page || page,
+        totalPages: res.total_pages || 1,
+        total: res.total || carts.length || 0,
+        perPage: res.per_page || 20,
+      });
     } catch (err) {
       console.error("Abandoned carts fetch failed:", err);
       setAbandonedCartsError(err.message || "Failed to fetch abandoned carts");
     } finally {
       setAbandonedCartsLoading(false);
     }
-  }, [session]);
+  },
+  [session]
+);
+
 
   useEffect(() => {
     if (session?.type === "sso" && session.store_id) {
@@ -601,49 +685,101 @@ const App = () => {
   }, [session, subscribeToPush]);
 
   // 🔔 Listen for messages from the service worker (abandoned cart / others)
-  useEffect(() => {
-    if (!("serviceWorker" in navigator)) return;
+useEffect(() => {
+  if (!("serviceWorker" in navigator)) return;
 
-    const handler = async (event) => {
-      const data = event.data || {};
-      if (!data.action) return;
+  const handler = async (event) => {
+    const data = event.data || {};
+    if (!data.action) return;
 
-      // 🔥 Abandoned cart push → open details
-      if (data.action === "open-abandoned-cart" && data.cartId) {
-        if (!session || session.type !== "sso" || !session.store_id) {
-          // No valid session yet -> just go to abandoned list
-          setActiveTab("abandoned-carts");
-          return;
-        }
-
-        setActiveTab("abandoned-cart-details");
-        setAbandonedCartDetailLoading(true);
-        setAbandonedCartDetailError(null);
-
-        try {
-          const fullCart = await fetchAbandonedCart(
-            session.store_id,
-            data.cartId
-          );
-          setSelectedAbandonedCart(fullCart);
-        } catch (err) {
-          console.error("Abandoned cart from push failed:", err);
-          setAbandonedCartDetailError(
-            err.message || "Failed to open abandoned cart"
-          );
-        } finally {
-          setAbandonedCartDetailLoading(false);
-        }
+    // 🔥 Abandoned cart push → open details
+    if (data.action === "open-abandoned-cart" && data.cartId) {
+      if (!session || session.type !== "sso" || !session.store_id) {
+        setActiveTab("abandoned-carts");
+        return;
       }
 
-      // if later you add other actions (open-order, etc.), handle them here too
-    };
+      setActiveTab("abandoned-cart-details");
+      setAbandonedCartDetailLoading(true);
+      setAbandonedCartDetailError(null);
 
-    navigator.serviceWorker.addEventListener("message", handler);
-    return () => {
-      navigator.serviceWorker.removeEventListener("message", handler);
-    };
-  }, [session]);
+      try {
+        const fullCart = await fetchAbandonedCart(
+          session.store_id,
+          data.cartId
+        );
+        setSelectedAbandonedCart(fullCart);
+      } catch (err) {
+        console.error("Abandoned cart from push failed:", err);
+        setAbandonedCartDetailError(
+          err.message || "Failed to open abandoned cart"
+        );
+      } finally {
+        setAbandonedCartDetailLoading(false);
+      }
+      return;
+    }
+
+    // 🔥 Order push → open order details
+    if (data.action === "open-order" && data.orderId) {
+      if (!session) {
+        // No session yet → just navigate to orders
+        setActiveTab("orders");
+        return;
+      }
+
+      try {
+        // Load the page filtered by that order ID, then open details
+        await handleOrderPageChange(1, { search: String(data.orderId) });
+
+        const found = (Array.isArray(data.orders) ? data.orders : []).find(
+          (o) => String(o.id) === String(data.orderId)
+        );
+
+        // Fallback: search in current state
+        const orderToOpen =
+          found ||
+          (Array.isArray(data.orders)
+            ? null
+            : (Array.isArray(data.orders) ? data.orders : data.orders) &&
+              (Array.isArray(data.orders) ? data.orders : data.orders).find(
+                (o) => String(o.id) === String(data.orderId)
+              )) ||
+          (Array.isArray(data.orders)
+            ? null
+            : Array.isArray(data.orders)
+            ? data.orders
+            : null);
+
+        const inState =
+          (Array.isArray(data.orders) ? data.orders : []) ||
+          (Array.isArray(data.orders) ? data.orders : []);
+
+        const stateOrder =
+          (Array.isArray(inState) &&
+            inState.find((o) => String(o.id) === String(data.orderId))) ||
+          null;
+
+        const finalOrder = found || stateOrder;
+
+        if (finalOrder) {
+          handleSelectOrder(finalOrder);
+        } else {
+          setActiveTab("orders");
+        }
+      } catch (err) {
+        console.error("Failed to open order from push:", err);
+        setActiveTab("orders");
+      }
+    }
+  };
+
+  navigator.serviceWorker.addEventListener("message", handler);
+  return () => {
+    navigator.serviceWorker.removeEventListener("message", handler);
+  };
+}, [session, handleOrderPageChange]);
+
 
   useEffect(() => {
     if (session) {
@@ -832,15 +968,23 @@ const App = () => {
           />
         );
       case "products":
-        return (
-          <ProductsList
-            products={data.products}
-            loading={loading}
-            error={error}
-            onRefresh={fetchAllData}
-            onLogout={handleLogout}
-          />
-        );
+  return (
+    <ProductsList
+      products={data.products}
+      loading={loading}
+      error={error}
+      // Refresh current page only
+      onRefresh={() =>
+        handleProductPageChange(productsPagination.currentPage || 1)
+      }
+      onLogout={handleLogout}
+      // 🔹 Pagination props
+      page={productsPagination.currentPage}
+      totalPages={productsPagination.totalPages}
+      onPageChange={handleProductPageChange}
+    />
+  );
+
       case "analytics":
         return (
           <Analytics
@@ -916,16 +1060,23 @@ const App = () => {
         );
       }
       case "abandoned-carts":
-        return (
-          <AbandonedCarts
-            carts={abandonedCarts}
-            loading={abandonedCartsLoading}
-            error={abandonedCartsError}
-            onRefresh={loadAbandonedCarts}
-            onBack={() => setActiveTab("dashboard")}
-            onSelectCart={handleSelectAbandonedCart}
-          />
-        );
+  return (
+    <AbandonedCarts
+      carts={abandonedCarts}
+      loading={abandonedCartsLoading}
+      error={abandonedCartsError}
+      onRefresh={() =>
+        loadAbandonedCarts(abandonedPagination.currentPage || 1)
+      }
+      onBack={() => setActiveTab("dashboard")}
+      onSelectCart={handleSelectAbandonedCart}
+      // 🔹 Pagination props
+      page={abandonedPagination.currentPage}
+      totalPages={abandonedPagination.totalPages}
+      onPageChange={loadAbandonedCarts}
+    />
+  );
+
       case "abandoned-cart-details":
         return (
           <AbandonedCartDetails
